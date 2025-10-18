@@ -1,0 +1,25 @@
+﻿# Environment files
+.env
+*.env
+.env.*
+
+# Database
+agent_brain.db
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Results
+results/
+screenshots/
+
+# IDE
+.vscode/
+.idea/
+*.swp
