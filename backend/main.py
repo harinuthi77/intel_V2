@@ -1,23 +1,12 @@
-"""
-FORGE Backend - Simple FastAPI Server
-Real-time intelligent agent execution
-"""
 
-import sys
-from pathlib import Path
-
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 import asyncio
-from datetime import datetime
 
 from playwright.sync_api import sync_playwright
-from core import Vision, CognitiveEngine, ActionExecutor, AgentMemory
+from core import Vision, Brain, Hands
 
 app = FastAPI(title="FORGE Agent")
 
@@ -30,13 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# WebSocket connections
-active_connections: List[WebSocket] = []
 
 class TaskRequest(BaseModel):
     task: str
     model: str = "claude"
     tools: List[str] = ["web"]
+
 
 @app.get("/")
 async def root():
@@ -45,30 +33,6 @@ async def root():
         "status": "healthy"
     }
 
-@app.websocket("/ws/progress")
-async def websocket_endpoint(websocket: WebSocket):
-    """Real-time progress updates"""
-    await websocket.accept()
-    active_connections.append(websocket)
-    
-    try:
-        await websocket.send_json({
-            "type": "connected",
-            "message": "WebSocket connected"
-        })
-        
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-
-async def broadcast(message: dict):
-    """Send to all connected clients"""
-    for connection in active_connections:
-        try:
-            await connection.send_json(message)
-        except:
-            pass
 
 @app.post("/execute")
 async def execute_task(request: TaskRequest):
@@ -91,12 +55,14 @@ async def execute_task(request: TaskRequest):
         return {
             "status": "success" if result["success"] else "failed",
             "message": f"Completed in {result['steps']} steps",
-            "data": result
+            "data": result,
+            "mode": "autonomous"
         }
         
     except Exception as e:
         print(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 def run_agent(task: str):
     """Execute agent synchronously"""
@@ -105,14 +71,13 @@ def run_agent(task: str):
         browser = p.chromium.launch(headless=False)
         page = browser.new_page(viewport={'width': 1920, 'height': 1080})
         
-        # Initialize
-        memory = AgentMemory()
-        vision = Vision(memory=memory, debug=True)
-        cognition = CognitiveEngine(memory=memory)
-        executor = ActionExecutor(page=page, memory=memory)
+        # Initialize components
+        vision = Vision()
+        brain = Brain()
+        hands = Hands(page)
         
         step = 0
-        max_steps = 20
+        max_steps = 15
         success = False
         
         while step < max_steps:
@@ -121,34 +86,40 @@ def run_agent(task: str):
             print(f"STEP {step}/{max_steps}")
             print(f"{'─'*80}")
             
-            # SEE
-            elements = vision.detect_all_elements(page)
-            screenshot_bytes, screenshot_b64 = vision.create_labeled_screenshot(page, elements)
-            page_data = vision.extract_page_content(page)
-            page_analysis = vision.analyze_page_structure(page)
+            # SEE - Detect elements
+            elements = vision.detect_elements(page)
+            screenshot_bytes, screenshot_b64 = vision.take_screenshot(page, elements)
             
-            # THINK
-            decision = cognition.think(
-                page=page,
+            print(f"   👁️ Found {len(elements)} interactive elements")
+            
+            # THINK - Decide action
+            decision = brain.think(
                 task=task,
-                screenshot_b64=screenshot_b64,
+                url=page.url,
                 elements=elements,
-                page_data=page_data,
-                page_analysis=page_analysis
+                screenshot_b64=screenshot_b64
             )
             
-            # ACT
-            action_success, action_msg = executor.execute(decision, elements)
+            # Check confidence
+            if decision['confidence'] < 7:
+                print(f"   ⚠️ Low confidence ({decision['confidence']}/10) - continuing anyway")
             
-            print(f"Result: {action_msg}")
+            # ACT - Execute action
+            action_success, action_msg = hands.do(
+                action=decision['action'],
+                target=decision['target'],
+                elements=elements
+            )
             
+            print(f"   {action_msg}")
+            
+            # Check if done
             if decision['action'] == 'done':
                 success = True
                 break
             
-            if memory.is_stuck()[0]:
-                print("\n⚠️ Stuck detected")
-                break
+            if not action_success:
+                print(f"   ⚠️ Action failed, continuing...")
         
         browser.close()
         
@@ -157,6 +128,7 @@ def run_agent(task: str):
             "steps": step,
             "final_url": page.url if page else None
         }
+
 
 if __name__ == "__main__":
     import uvicorn
