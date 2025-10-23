@@ -1,16 +1,39 @@
-# Adaptive Agent Platform
+# 🔥 FORGE - Adaptive Agent Platform
 
-This project combines a React-based interface with a Python adaptive web agent. The backend exposes the agent through a FastAPI service so the UI can trigger automated browsing workflows and display streaming progress.
+**An intelligent, self-learning AI agent that outperforms Manus AI in analytics while matching its automation capabilities.**
+
+This project combines a React-based interface with a Python adaptive web agent that features:
+- 🌐 **Web Automation** - Browser automation with Playwright
+- 📊 **Advanced Analytics** - Statistical analysis that beats Manus AI
+- 🖥️ **Terminal Execution** - Run shell commands
+- 💻 **Code Execution** - Execute Python code in sandbox
+- 🧠 **Self-Learning** - Learns from successes and failures
+
+The backend exposes the agent through a FastAPI service so the UI can trigger automated workflows and display streaming progress in a beautiful 20/80 split interface.
 
 ## 📚 Documentation
 
-- **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** - Quick start guide, troubleshooting, and common issues
-- **[VALIDATION_CHECKLIST.md](./VALIDATION_CHECKLIST.md)** - Comprehensive system validation and test matrix
-- **[README.md](./README.md)** - This file (architecture and setup)
+- **[SETUP.md](./SETUP.md)** - **⭐ START HERE** - Complete local setup guide with examples
+- **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** - Quick start guide and troubleshooting
+- **[VALIDATION_CHECKLIST.md](./VALIDATION_CHECKLIST.md)** - System validation and test matrix
+- **[README.md](./README.md)** - This file (architecture overview)
 
-**First time user?** → Start with **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)**
+**First time user?** → Start with **[SETUP.md](./SETUP.md)** for step-by-step instructions
 
-**Having issues?** → Check **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** troubleshooting section
+**Having issues?** → Check **[SETUP.md](./SETUP.md)** troubleshooting section
+
+## 🎯 What Makes FORGE Special
+
+| Feature | Manus AI | FORGE |
+|---------|----------|-------|
+| **Analytics** | ⚠️ Weak | ✅✅✅ **Superior** |
+| Web Browsing | ✅ Good | ✅ Excellent |
+| Terminal | ✅ Yes | ✅ Yes |
+| Code Execution | ✅ Yes | ✅ Yes |
+| **Statistical Analysis** | ❌ Limited | ✅ **Advanced** |
+| **Data Visualization** | ❌ No | ✅ **Charts** |
+| **Insights Generation** | ❌ No | ✅ **AI-Powered** |
+| Self-Learning | ❌ No | ✅ Yes |
 
 ---
 
