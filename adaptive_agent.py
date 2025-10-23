@@ -200,10 +200,10 @@ def get_past_failures(conn, domain: str) -> List[Dict]:
     """Retrieve past failures to avoid repeating mistakes"""
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT action, error_type, context, COUNT(*) as occurrences
+        SELECT attempted_action as action, error_type, context, COUNT(*) as occurrences
         FROM failures
         WHERE website_domain = ?
-        GROUP BY action, error_type
+        GROUP BY attempted_action, error_type
         ORDER BY occurrences DESC
         LIMIT 5
     ''', (domain,))
@@ -918,11 +918,23 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     success = False
                     try:
                         if action == "done":
-                            if not collected_data:
+                            # Check if this is a data collection task or simple navigation
+                            data_keywords = ['find', 'search', 'get', 'list', 'extract', 'top', 'best', 'compare', 'price']
+                            requires_data = any(keyword in task.lower() for keyword in data_keywords)
+
+                            if not collected_data and requires_data:
                                 print("❌ REJECTED: Cannot complete without results!")
+                                print("   Task requires data collection, but no data collected yet.")
                                 print("   Continuing to gather data...")
                                 reflection.record_action('done_without_results', False)
                                 continue
+                            elif not collected_data:
+                                print("\n" + "="*70)
+                                print("✅ TASK COMPLETED (Navigation/Action)")
+                                print("="*70)
+                                print(f"Task: {task}")
+                                print("No data collection was required for this task.")
+                                break
 
                             print("\n" + "="*70)
                             print("✅ TASK COMPLETED WITH RESULTS")
