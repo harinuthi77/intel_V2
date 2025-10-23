@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # IMPORTANT: Add parent directory to Python path FIRST (before any other imports)
 import sys
+import os
 from pathlib import Path
 
 # Get absolute path to parent directory (where adaptive_agent.py lives)
@@ -34,6 +35,26 @@ active_sessions = {}
 
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
+
+# =============================================================================
+# CRITICAL: Validate API key on startup
+# =============================================================================
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+if not ANTHROPIC_API_KEY:
+    logger.error("=" * 70)
+    logger.error("🚨 CRITICAL: ANTHROPIC_API_KEY environment variable not set!")
+    logger.error("=" * 70)
+    logger.error("Set it with:")
+    logger.error("  Windows PowerShell: $env:ANTHROPIC_API_KEY = 'sk-ant-...'")
+    logger.error("  Windows CMD: set ANTHROPIC_API_KEY=sk-ant-...")
+    logger.error("  Linux/Mac: export ANTHROPIC_API_KEY='sk-ant-...'")
+    logger.error("=" * 70)
+    logger.error("Get your API key from: https://console.anthropic.com/settings/keys")
+    logger.error("=" * 70)
+    raise RuntimeError("ANTHROPIC_API_KEY not set - cannot start server")
+
+logger.info(f"✅ ANTHROPIC_API_KEY is set (starts with {ANTHROPIC_API_KEY[:10]}...)")
+# =============================================================================
 
 app = FastAPI(title="Adaptive Agent Backend", version="1.0.0")
 

@@ -1389,25 +1389,29 @@ export default function ForgePlatform() {
                     }}>
                       {currentUrl || 'Loading...'}
                     </div>
+                    {/* Manual Control button - Disabled until session management is implemented */}
+                    {/* TODO: Implement proper browser session management for manual control */}
                     <button
                       onClick={handleTakeControl}
+                      disabled
+                      title="Manual control requires browser session management (coming soon)"
                       style={{
                         padding: '6px 12px',
-                        background: manualControl ? 'rgba(147, 51, 234, 0.2)' : 'transparent',
-                        border: `1px solid ${manualControl ? '#9333ea' : '#222222'}`,
+                        background: 'transparent',
+                        border: '1px solid #222222',
                         borderRadius: '4px',
-                        color: manualControl ? '#a855f7' : '#888888',
-                        cursor: 'pointer',
-                        display: 'flex',
+                        color: '#555555',
+                        cursor: 'not-allowed',
+                        display: 'none', // Hidden until implemented
                         alignItems: 'center',
                         gap: '6px',
                         fontSize: '11px',
                         fontWeight: '500',
-                        transition: 'all 0.2s'
+                        opacity: 0.5
                       }}
                     >
                       <Hammer size={14} />
-                      {manualControl ? 'Release' : 'Take Control'}
+                      Take Control (Coming Soon)
                     </button>
                   </>
                 )}

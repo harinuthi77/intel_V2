@@ -6,6 +6,7 @@ import time
 import random
 import json
 import sqlite3
+import os
 from datetime import datetime
 import sys
 from dataclasses import dataclass, field
@@ -16,7 +17,19 @@ import builtins
 from computational_env import get_computational_environment, CodeEditor
 from analytics_engine import get_analytics_engine
 
-client = anthropic.Anthropic()
+# Validate API key
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    raise ValueError(
+        "🚨 ANTHROPIC_API_KEY not found in environment variables!\n"
+        "Set it with:\n"
+        "  Windows PowerShell: $env:ANTHROPIC_API_KEY = 'sk-ant-...'\n"
+        "  Windows CMD: set ANTHROPIC_API_KEY=sk-ant-...\n"
+        "  Linux/Mac: export ANTHROPIC_API_KEY='sk-ant-...'\n"
+        "Get your key from: https://console.anthropic.com/settings/keys"
+    )
+
+client = anthropic.Anthropic(api_key=api_key)
 
 
 @dataclass
@@ -894,13 +907,34 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                         answer = response.content[0].text
                         print(f"\n🤖 AGENT DECISION:\n{answer}\n")
                     except anthropic.AuthenticationError as auth_error:
-                        print(f"\n❌ ANTHROPIC API KEY IS INVALID!")
-                        print(f"Error: {auth_error}")
-                        print("Get a valid key from: https://console.anthropic.com")
+                        error_msg = f"ANTHROPIC API KEY IS INVALID: {str(auth_error)}"
+                        print(f"\n❌ {error_msg}")
+                        print("Get a valid key from: https://console.anthropic.com/settings/keys")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        success = False
                         break
-                    except Exception as api_error:
-                        print(f"\n❌ Claude API call failed: {api_error}")
+                    except anthropic.RateLimitError as rate_error:
+                        error_msg = f"Rate limit exceeded: {str(rate_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        print("Waiting 60 seconds before retry...")
+                        time.sleep(60)
+                        continue
+                    except anthropic.APIError as api_error:
+                        error_msg = f"Anthropic API error: {str(api_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
                         print("Retrying with simpler prompt...")
+                        continue
+                    except Exception as api_error:
+                        error_msg = f"Unexpected API error: {str(api_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        print("Retrying...")
                         continue
 
                     conversation_history.append({"role": "assistant", "content": answer})
