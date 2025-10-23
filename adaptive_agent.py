@@ -723,40 +723,49 @@ def run_adaptive_agent(
                     print(f"🔍 Detected {len(elements)} interactive elements")
 
                     # Get comprehensive memory recall
-                    strategies = get_learned_strategies(learning_db, task_type, current_domain)
-                    failures = get_past_failures(learning_db, current_domain)
-                    site_patterns = get_site_patterns(learning_db, current_domain)
-                    past_results = get_similar_past_results(learning_db, task_type)
-
-                    # Build memory context for Claude
+                    print("💾 Loading memory from database...")
                     memory_text = ""
+                    try:
+                        strategies = get_learned_strategies(learning_db, task_type, current_domain)
+                        failures = get_past_failures(learning_db, current_domain)
+                        site_patterns = get_site_patterns(learning_db, current_domain)
+                        past_results = get_similar_past_results(learning_db, task_type)
+                        print(f"✅ Memory loaded: {len(strategies)} strategies, {len(failures)} failures")
 
-                    if strategies:
-                        memory_text += "\n\n🎓 LEARNED STRATEGIES (Proven approaches for this site):\n"
-                        for i, s in enumerate(strategies, 1):
-                            memory_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+                        # Build memory context for Claude
+                        if strategies:
+                            memory_text += "\n\n🎓 LEARNED STRATEGIES (Proven approaches for this site):\n"
+                            for i, s in enumerate(strategies, 1):
+                                memory_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
 
-                    if failures:
-                        memory_text += "\n\n⚠️ PAST FAILURES TO AVOID:\n"
-                        for i, f in enumerate(failures, 1):
-                            memory_text += f"{i}. Action '{f['action']}' failed {f['occurrences']}x with error: {f['error_type']}\n"
+                        if failures:
+                            memory_text += "\n\n⚠️ PAST FAILURES TO AVOID:\n"
+                            for i, f in enumerate(failures, 1):
+                                memory_text += f"{i}. Action '{f['action']}' failed {f['occurrences']}x with error: {f['error_type']}\n"
 
-                    if site_patterns:
-                        memory_text += "\n\n🔍 SITE-SPECIFIC PATTERNS:\n"
-                        for i, p in enumerate(site_patterns, 1):
-                            memory_text += f"{i}. {p['element_type']}: {p['selector_patterns']} (Success: {p['success_count']}x)\n"
+                        if site_patterns:
+                            memory_text += "\n\n🔍 SITE-SPECIFIC PATTERNS:\n"
+                            for i, p in enumerate(site_patterns, 1):
+                                memory_text += f"{i}. {p['element_type']}: {p['selector_patterns']} (Success: {p['success_count']}x)\n"
 
-                    if past_results:
-                        memory_text += "\n\n💡 SIMILAR PAST SUCCESSES:\n"
-                        for i, r in enumerate(past_results, 1):
-                            memory_text += f"{i}. Task: '{r['task'][:50]}...' (Confidence: {r['confidence']*100:.0f}%)\n"
+                        if past_results:
+                            memory_text += "\n\n💡 SIMILAR PAST SUCCESSES:\n"
+                            for i, r in enumerate(past_results, 1):
+                                memory_text += f"{i}. Task: '{r['task'][:50]}...' (Confidence: {r['confidence']*100:.0f}%)\n"
 
-                    if memory_text:
-                        memory_text = "\n" + "="*70 + "\n🧠 MEMORY RECALL - Learn from past experience!\n" + "="*70 + memory_text
+                        if memory_text:
+                            memory_text = "\n" + "="*70 + "\n🧠 MEMORY RECALL - Learn from past experience!\n" + "="*70 + memory_text
+                    except Exception as memory_error:
+                        print(f"⚠️ Memory loading failed (continuing anyway): {memory_error}")
+                        memory_text = ""
 
                     # Draw labels
                     print(f"📝 Drawing labels for {len(elements)} elements...")
-                    draw_labels(page, elements)
+                    try:
+                        draw_labels(page, elements)
+                        print("✅ Labels drawn successfully")
+                    except Exception as label_error:
+                        print(f"⚠️ Label drawing failed (continuing anyway): {label_error}")
                     time.sleep(0.4)
 
                     # Screenshot
@@ -864,15 +873,25 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
                     # Get Claude's decision
                     print("🔄 Calling Claude API...")
-                    response = client.messages.create(
-                        model=anthropic_model,
-                        max_tokens=1000,
-                        messages=messages
-                    )
-                    print("✅ Claude API responded!")
+                    try:
+                        response = client.messages.create(
+                            model=anthropic_model,
+                            max_tokens=1000,
+                            messages=messages
+                        )
+                        print("✅ Claude API responded!")
 
-                    answer = response.content[0].text
-                    print(f"\n🤖 AGENT DECISION:\n{answer}\n")
+                        answer = response.content[0].text
+                        print(f"\n🤖 AGENT DECISION:\n{answer}\n")
+                    except anthropic.AuthenticationError as auth_error:
+                        print(f"\n❌ ANTHROPIC API KEY IS INVALID!")
+                        print(f"Error: {auth_error}")
+                        print("Get a valid key from: https://console.anthropic.com")
+                        break
+                    except Exception as api_error:
+                        print(f"\n❌ Claude API call failed: {api_error}")
+                        print("Retrying with simpler prompt...")
+                        continue
 
                     conversation_history.append({"role": "assistant", "content": answer})
 
