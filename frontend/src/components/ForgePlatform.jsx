@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2 } from 'lucide-react'
 
+// API Configuration - Change port here if needed
+const API_BASE_URL = 'http://localhost:8000'
+
 export default function ForgePlatform() {
   const [task, setTask] = useState('')
   const [isActive, setIsActive] = useState(false)
@@ -102,7 +105,7 @@ export default function ForgePlatform() {
     setCurrentStep(initialSteps[0])
 
     try {
-      const response = await fetch('http://localhost:8000/execute', {
+      const response = await fetch(`${API_BASE_URL}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
