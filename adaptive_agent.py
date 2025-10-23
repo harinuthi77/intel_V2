@@ -755,13 +755,16 @@ def run_adaptive_agent(
                         memory_text = "\n" + "="*70 + "\n🧠 MEMORY RECALL - Learn from past experience!\n" + "="*70 + memory_text
 
                     # Draw labels
+                    print(f"📝 Drawing labels for {len(elements)} elements...")
                     draw_labels(page, elements)
                     time.sleep(0.4)
 
                     # Screenshot
+                    print("📸 Taking screenshot...")
                     try:
                         screenshot = page.screenshot()
                         screenshot_b64 = base64.b64encode(screenshot).decode()
+                        print(f"✅ Screenshot captured ({len(screenshot_b64)} bytes)")
 
                         # Send screenshot to frontend via progress callback
                         _emit(
@@ -774,12 +777,14 @@ def run_adaptive_agent(
                                 "step": step + 1
                             }
                         )
+                        print("✅ Screenshot sent to frontend")
                     except Exception as screenshot_error:
                         error_text = str(screenshot_error)
                         errors.append(error_text)
                         print(f"✗ Screenshot failed: {error_text}")
                         break
 
+                    print("🗑️  Removing labels...")
                     remove_labels(page)
 
                     # Build focused element list (prioritize visible, important elements)
@@ -858,11 +863,13 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     }]
 
                     # Get Claude's decision
+                    print("🔄 Calling Claude API...")
                     response = client.messages.create(
                         model=anthropic_model,
                         max_tokens=1000,
                         messages=messages
                     )
+                    print("✅ Claude API responded!")
 
                     answer = response.content[0].text
                     print(f"\n🤖 AGENT DECISION:\n{answer}\n")
