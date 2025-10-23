@@ -182,7 +182,7 @@ def get_learned_strategies(conn, task_type: str, domain: str) -> List[Dict]:
         ORDER BY success_rate DESC, times_used DESC
         LIMIT 3
     ''', (task_type, domain))
-    
+
     strategies = []
     for row in cursor.fetchall():
         strategies.append({
@@ -192,8 +192,81 @@ def get_learned_strategies(conn, task_type: str, domain: str) -> List[Dict]:
             'avg_steps': row[3],
             'notes': row[4]
         })
-    
+
     return strategies
+
+
+def get_past_failures(conn, domain: str) -> List[Dict]:
+    """Retrieve past failures to avoid repeating mistakes"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT attempted_action as action, error_type, context, COUNT(*) as occurrences
+        FROM failures
+        WHERE website_domain = ?
+        GROUP BY attempted_action, error_type
+        ORDER BY occurrences DESC
+        LIMIT 5
+    ''', (domain,))
+
+    failures = []
+    for row in cursor.fetchall():
+        failures.append({
+            'action': row[0],
+            'error_type': row[1],
+            'context': row[2],
+            'occurrences': row[3]
+        })
+
+    return failures
+
+
+def get_site_patterns(conn, domain: str) -> List[Dict]:
+    """Retrieve site-specific element patterns"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT element_type, selector_patterns, success_count
+        FROM site_patterns
+        WHERE website_domain = ?
+        ORDER BY success_count DESC
+        LIMIT 5
+    ''', (domain,))
+
+    patterns = []
+    for row in cursor.fetchall():
+        patterns.append({
+            'element_type': row[0],
+            'selector_patterns': row[1],
+            'success_count': row[2]
+        })
+
+    return patterns
+
+
+def get_similar_past_results(conn, task_type: str) -> List[Dict]:
+    """Retrieve successful results from similar tasks"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT task, result_data, confidence
+        FROM results
+        WHERE result_type = 'completion'
+        ORDER BY timestamp DESC
+        LIMIT 3
+    ''', ())
+
+    results = []
+    for row in cursor.fetchall():
+        # Only include if task similarity is high
+        if task_type.lower() in row[0].lower():
+            try:
+                results.append({
+                    'task': row[0],
+                    'result_data': json.loads(row[1]) if isinstance(row[1], str) else row[1],
+                    'confidence': row[2]
+                })
+            except:
+                pass
+
+    return results
 
 def save_result(conn, session_id: str, task: str, result_data: any, confidence: float):
     """Save final results with confidence score"""
@@ -269,8 +342,8 @@ def detect_elements_smart(page):
 
 def extract_structured_data(page, data_type: str = 'auto'):
     """Extract structured data from any page intelligently"""
-    
-    data = page.evaluate("""
+
+    data = page.evaluate(r"""
         (dataType) => {
             const extracted = {
                 products: [],
@@ -649,28 +722,78 @@ def run_adaptive_agent(
                     elements = detect_elements_smart(page)
                     print(f"🔍 Detected {len(elements)} interactive elements")
 
-                    # Get learned strategies
-                    strategies = get_learned_strategies(learning_db, task_type, current_domain)
-                    strategy_text = ""
-                    if strategies:
-                        strategy_text = "\n\n🎓 LEARNED STRATEGIES for this site:\n"
-                        for i, s in enumerate(strategies, 1):
-                            strategy_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+                    # Get comprehensive memory recall
+                    print("💾 Loading memory from database...")
+                    memory_text = ""
+                    try:
+                        strategies = get_learned_strategies(learning_db, task_type, current_domain)
+                        failures = get_past_failures(learning_db, current_domain)
+                        site_patterns = get_site_patterns(learning_db, current_domain)
+                        past_results = get_similar_past_results(learning_db, task_type)
+                        print(f"✅ Memory loaded: {len(strategies)} strategies, {len(failures)} failures")
+
+                        # Build memory context for Claude
+                        if strategies:
+                            memory_text += "\n\n🎓 LEARNED STRATEGIES (Proven approaches for this site):\n"
+                            for i, s in enumerate(strategies, 1):
+                                memory_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+
+                        if failures:
+                            memory_text += "\n\n⚠️ PAST FAILURES TO AVOID:\n"
+                            for i, f in enumerate(failures, 1):
+                                memory_text += f"{i}. Action '{f['action']}' failed {f['occurrences']}x with error: {f['error_type']}\n"
+
+                        if site_patterns:
+                            memory_text += "\n\n🔍 SITE-SPECIFIC PATTERNS:\n"
+                            for i, p in enumerate(site_patterns, 1):
+                                memory_text += f"{i}. {p['element_type']}: {p['selector_patterns']} (Success: {p['success_count']}x)\n"
+
+                        if past_results:
+                            memory_text += "\n\n💡 SIMILAR PAST SUCCESSES:\n"
+                            for i, r in enumerate(past_results, 1):
+                                memory_text += f"{i}. Task: '{r['task'][:50]}...' (Confidence: {r['confidence']*100:.0f}%)\n"
+
+                        if memory_text:
+                            memory_text = "\n" + "="*70 + "\n🧠 MEMORY RECALL - Learn from past experience!\n" + "="*70 + memory_text
+                    except Exception as memory_error:
+                        print(f"⚠️ Memory loading failed (continuing anyway): {memory_error}")
+                        memory_text = ""
 
                     # Draw labels
-                    draw_labels(page, elements)
+                    print(f"📝 Drawing labels for {len(elements)} elements...")
+                    try:
+                        draw_labels(page, elements)
+                        print("✅ Labels drawn successfully")
+                    except Exception as label_error:
+                        print(f"⚠️ Label drawing failed (continuing anyway): {label_error}")
                     time.sleep(0.4)
 
                     # Screenshot
+                    print("📸 Taking screenshot...")
                     try:
                         screenshot = page.screenshot()
                         screenshot_b64 = base64.b64encode(screenshot).decode()
+                        print(f"✅ Screenshot captured ({len(screenshot_b64)} bytes)")
+
+                        # Send screenshot to frontend via progress callback
+                        _emit(
+                            f"📸 Screenshot captured at step {step + 1}",
+                            level="info",
+                            payload={
+                                "type": "screenshot",
+                                "image": screenshot_b64,
+                                "url": current_url,
+                                "step": step + 1
+                            }
+                        )
+                        print("✅ Screenshot sent to frontend")
                     except Exception as screenshot_error:
                         error_text = str(screenshot_error)
                         errors.append(error_text)
                         print(f"✗ Screenshot failed: {error_text}")
                         break
 
+                    print("🗑️  Removing labels...")
                     remove_labels(page)
 
                     # Build focused element list (prioritize visible, important elements)
@@ -710,7 +833,7 @@ def run_adaptive_agent(
 📍 Current URL: {page.url}
 🌐 Domain: {current_domain}
 
-{reflection.get_progress_summary()}{results_summary}{strategy_text}
+{reflection.get_progress_summary()}{results_summary}{memory_text}
 
 🔍 VISIBLE ELEMENTS (color-coded on screenshot):
 {chr(10).join(elem_list)}
@@ -719,18 +842,20 @@ AVAILABLE ACTIONS:
 • goto <url> - Navigate to URL
 • click <id> - Click element
 • type <text> - Type in search/input (auto-finds input)
-• extract - Extract ALL data from current page intelligently
-• analyze - Analyze collected data and generate final results
-• done - Task complete with results
+• extract - Extract ALL data from current page intelligently (Claude filters for relevance)
+• analyze - Get intelligent recommendations from collected data (ONLY CALL ONCE)
+• done - Task complete with results (call immediately after analyze)
 
 🧠 INTELLIGENCE GUIDELINES:
 1. **Learn from context**: Use EXTRACTED DATA above to avoid redundant clicks
 2. **Be efficient**: Use 'extract' to gather data, don't click every item
 3. **Adapt if stuck**: If same action isn't working, try different approach
-4. **Validate results**: Before 'done', ensure you have meaningful data
-5. **Think strategically**: What's the fastest path to complete results?
+4. **ONE analyze call**: After collecting enough data, call analyze ONCE to get recommendations
+5. **Finish immediately**: Call "done" RIGHT AFTER analyze - don't repeat analyze!
 
-⚡ CRITICAL: Your goal is RESULTS, not just actions. Don't say "done" without deliverables!
+⚡ CRITICAL: Your goal is RESULTS, not endless actions!
+⚡ WORKFLOW: navigate → extract data → analyze ONCE → done
+⚡ NEVER call "analyze" multiple times - it's a waste! Once you have recommendations, call "done"!
 
 What's your next intelligent action?
 
@@ -747,14 +872,26 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     }]
 
                     # Get Claude's decision
-                    response = client.messages.create(
-                        model=anthropic_model,
-                        max_tokens=1000,
-                        messages=messages
-                    )
+                    print("🔄 Calling Claude API...")
+                    try:
+                        response = client.messages.create(
+                            model=anthropic_model,
+                            max_tokens=1000,
+                            messages=messages
+                        )
+                        print("✅ Claude API responded!")
 
-                    answer = response.content[0].text
-                    print(f"\n🤖 AGENT DECISION:\n{answer}\n")
+                        answer = response.content[0].text
+                        print(f"\n🤖 AGENT DECISION:\n{answer}\n")
+                    except anthropic.AuthenticationError as auth_error:
+                        print(f"\n❌ ANTHROPIC API KEY IS INVALID!")
+                        print(f"Error: {auth_error}")
+                        print("Get a valid key from: https://console.anthropic.com")
+                        break
+                    except Exception as api_error:
+                        print(f"\n❌ Claude API call failed: {api_error}")
+                        print("Retrying with simpler prompt...")
+                        continue
 
                     conversation_history.append({"role": "assistant", "content": answer})
 
@@ -781,11 +918,23 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     success = False
                     try:
                         if action == "done":
-                            if not collected_data:
+                            # Check if this is a data collection task or simple navigation
+                            data_keywords = ['find', 'search', 'get', 'list', 'extract', 'top', 'best', 'compare', 'price']
+                            requires_data = any(keyword in task.lower() for keyword in data_keywords)
+
+                            if not collected_data and requires_data:
                                 print("❌ REJECTED: Cannot complete without results!")
+                                print("   Task requires data collection, but no data collected yet.")
                                 print("   Continuing to gather data...")
                                 reflection.record_action('done_without_results', False)
                                 continue
+                            elif not collected_data:
+                                print("\n" + "="*70)
+                                print("✅ TASK COMPLETED (Navigation/Action)")
+                                print("="*70)
+                                print(f"Task: {task}")
+                                print("No data collection was required for this task.")
+                                break
 
                             print("\n" + "="*70)
                             print("✅ TASK COMPLETED WITH RESULTS")
@@ -814,23 +963,87 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
                         elif action == "extract":
                             extracted = extract_structured_data(page)
-                            new_items = extracted['products']
+                            raw_items = extracted['products']
 
-                            if new_items:
+                            if raw_items:
+                                print(f"📦 Extracted {len(raw_items)} raw items from page")
+
+                                # Use Claude to filter for relevant items
+                                items_preview = []
+                                for i, item in enumerate(raw_items[:30], 1):  # Preview first 30
+                                    preview = f"{i}. {item.get('name', 'Unknown')[:80]}"
+                                    if item.get('price'):
+                                        preview += f" - ${item['price']}"
+                                    items_preview.append(preview)
+
+                                filter_prompt = f"""Task: {task}
+
+I just extracted {len(raw_items)} items from a webpage. Here are the first 30:
+
+{chr(10).join(items_preview)}
+
+Question: Which of these items are RELEVANT to the task "{task}"?
+
+Rules:
+- Only include items that match the task requirements (correct category, size, price range, etc.)
+- Exclude irrelevant products (wrong category, wrong size, out of budget)
+- Be strict - when in doubt, exclude it
+
+Respond with ONLY the item numbers that are relevant, comma-separated. For example: "1,5,7,12,15,18"
+If NONE are relevant, respond with: "NONE"
+"""
+
+                                try:
+                                    # Ask Claude to filter
+                                    filter_response = client.messages.create(
+                                        model=anthropic_model,
+                                        max_tokens=500,
+                                        messages=[{
+                                            "role": "user",
+                                            "content": filter_prompt
+                                        }]
+                                    )
+
+                                    filter_result = filter_response.content[0].text.strip()
+                                    print(f"🧠 Claude's relevance filter: {filter_result}")
+
+                                    # Parse the response
+                                    if filter_result.upper() == "NONE":
+                                        print("⚠️ Claude says: No relevant items found")
+                                        new_items = []
+                                    else:
+                                        # Extract item numbers
+                                        try:
+                                            relevant_indices = [int(x.strip()) - 1 for x in filter_result.split(',') if x.strip().isdigit()]
+                                            new_items = [raw_items[i] for i in relevant_indices if i < len(raw_items)]
+                                            print(f"✓ Claude filtered: {len(new_items)} relevant items out of {len(raw_items)}")
+                                        except:
+                                            # Fallback: keep all items if parsing fails
+                                            print("⚠️ Filter parsing failed, keeping all items")
+                                            new_items = raw_items
+                                except Exception as e:
+                                    print(f"⚠️ Claude filter failed: {str(e)}, keeping all items")
+                                    new_items = raw_items
+
                                 # Avoid duplicates
-                                existing_urls = {item.get('url') for item in collected_data}
-                                new_items = [item for item in new_items if item.get('url') not in existing_urls]
+                                if new_items:
+                                    existing_urls = {item.get('url') for item in collected_data}
+                                    new_items = [item for item in new_items if item.get('url') not in existing_urls]
 
-                                collected_data.extend(new_items)
-                                print(f"✓ Extracted {len(new_items)} new items (Total: {len(collected_data)})")
-                                reflection.progress_metrics['data_extracted'] = len(collected_data)
-                                success = True
+                                    collected_data.extend(new_items)
+                                    print(f"✓ Added {len(new_items)} new relevant items (Total: {len(collected_data)})")
+                                    reflection.progress_metrics['data_extracted'] = len(collected_data)
+                                    success = True
+                                else:
+                                    print("⚠️ No relevant items after filtering")
+                                    success = False
                             else:
                                 print("⚠️ No data extracted - may need different approach")
                                 learn_from_failure(learning_db, task_type, current_domain, 'extract',
                                                  'no_data', json.dumps({'url': current_url}))
+                                success = False
 
-                            reflection.record_action('extract', success, len(new_items) if success else 0)
+                            reflection.record_action('extract', success, len(new_items) if success and new_items else 0)
                             time.sleep(1)
 
                         elif action == "analyze":
@@ -840,27 +1053,89 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                                 continue
 
                             print("\n" + "="*70)
-                            print("📊 DATA ANALYSIS")
+                            print("📊 INTELLIGENT DATA ANALYSIS (Using Claude's Reasoning)")
                             print("="*70)
                             print(f"Total items collected: {len(collected_data)}\n")
 
-                            # Sort by relevance
-                            sorted_data = sorted(collected_data,
-                                               key=lambda x: (x.get('rating', 0), x.get('reviews', 0)),
-                                               reverse=True)
-
-                            print("🏆 TOP MATCHES:")
-                            for i, item in enumerate(sorted_data[:10], 1):
-                                print(f"\n{i}. {item.get('name', 'Unknown')}")
+                            # Prepare data for Claude to analyze
+                            items_for_analysis = []
+                            for i, item in enumerate(collected_data[:50], 1):  # Limit to 50 to avoid token limits
+                                item_summary = f"{i}. {item.get('name', 'Unknown')}"
                                 if item.get('price'):
-                                    print(f"   💰 ${item['price']}")
+                                    item_summary += f" - ${item['price']}"
                                 if item.get('rating'):
-                                    print(f"   ⭐ {item['rating']}/5")
+                                    item_summary += f" - ⭐{item['rating']}"
                                 if item.get('reviews'):
-                                    print(f"   💬 {item['reviews']:,} reviews")
+                                    item_summary += f" ({item['reviews']} reviews)"
+                                items_for_analysis.append(item_summary)
 
-                            success = True
-                            reflection.record_action('analyze', True)
+                            # Ask Claude to intelligently filter and rank
+                            analysis_prompt = f"""You are analyzing collected product data for this task: {task}
+
+I collected {len(collected_data)} items from the website. Here are the first 50:
+
+{chr(10).join(items_for_analysis)}
+
+Your job:
+1. **Filter**: Identify which items are RELEVANT to the task "{task}". Remove items that don't match (wrong category, wrong size, out of budget, etc.)
+2. **Rank**: Rank the relevant items by best value (considering price, ratings, reviews, features)
+3. **Recommend**: Provide the TOP 3-5 specific recommendations with:
+   - Item number from the list above
+   - Product name
+   - Why it's a good choice
+   - Final recommendation for the BEST option
+
+Be specific. Reference item numbers from the list. If no items match the criteria, say so clearly.
+
+Format your response as:
+RELEVANT ITEMS: [list item numbers that match]
+TOP RECOMMENDATIONS:
+1. Item #X - [name] - [why it's good]
+2. Item #Y - [name] - [why it's good]
+...
+BEST CHOICE: Item #Z because [clear reasoning]"""
+
+                            try:
+                                # Use Claude to analyze
+                                analysis_response = client.messages.create(
+                                    model=anthropic_model,
+                                    max_tokens=2000,
+                                    messages=[{
+                                        "role": "user",
+                                        "content": analysis_prompt
+                                    }]
+                                )
+
+                                analysis_result = analysis_response.content[0].text
+                                print("\n🧠 CLAUDE'S ANALYSIS:")
+                                print("="*70)
+                                print(analysis_result)
+                                print("="*70)
+
+                                # Store analysis in metadata
+                                reflection.progress_metrics['intelligent_analysis'] = analysis_result
+
+                                success = True
+                                reflection.record_action('analyze_intelligent', True)
+                            except Exception as e:
+                                print(f"❌ Analysis failed: {str(e)}")
+                                # Fallback to simple display
+                                print("🏆 TOP ITEMS (Simple Sort):")
+                                sorted_data = sorted(collected_data,
+                                                   key=lambda x: (x.get('rating', 0), x.get('reviews', 0)),
+                                                   reverse=True)
+                                for i, item in enumerate(sorted_data[:10], 1):
+                                    print(f"\n{i}. {item.get('name', 'Unknown')}")
+                                    if item.get('price'):
+                                        print(f"   💰 ${item['price']}")
+                                    if item.get('rating'):
+                                        print(f"   ⭐ {item['rating']}/5")
+                                    if item.get('reviews'):
+                                        print(f"   💬 {item['reviews']:,} reviews")
+
+                                success = False
+                                reflection.record_action('analyze', False)
+
                             time.sleep(2)
 
                         elif action == "goto":
