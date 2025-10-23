@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List
+from queue import Queue
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from adaptive_agent import AgentConfig, AgentResult, run_adaptive_agent
@@ -84,6 +87,63 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return ExecuteResponse(**result.to_dict())
+
+
+@app.post("/execute/stream")
+async def execute_stream(request: ExecuteRequest):
+    """Execute the adaptive agent with real-time streaming updates including screenshots."""
+
+    event_queue = Queue()
+
+    def progress_handler(event: Dict[str, Any]) -> None:
+        """Capture progress events and screenshots for streaming."""
+        event_queue.put(event)
+
+    config = AgentConfig(
+        task=request.task,
+        model=request.model,
+        tools=request.tools,
+        max_steps=request.max_steps,
+        headless=request.headless,
+    )
+
+    async def event_generator():
+        """Stream events to the frontend in real-time."""
+        loop = asyncio.get_running_loop()
+
+        # Start agent execution in background
+        agent_task = loop.run_in_executor(
+            None, lambda: run_adaptive_agent(config, progress_callback=progress_handler)
+        )
+
+        # Stream events as they arrive
+        while True:
+            # Check if agent is done
+            if agent_task.done():
+                # Send final result
+                try:
+                    result = agent_task.result()
+                    yield f"data: {json.dumps({'type': 'final', 'result': result.to_dict()})}\n\n"
+                except Exception as exc:
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+                break
+
+            # Send queued events
+            while not event_queue.empty():
+                event = event_queue.get()
+                yield f"data: {json.dumps({'type': 'event', 'event': event})}\n\n"
+
+            # Small delay to avoid busy waiting
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
 
 
 if __name__ == "__main__":

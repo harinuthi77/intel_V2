@@ -665,6 +665,18 @@ def run_adaptive_agent(
                     try:
                         screenshot = page.screenshot()
                         screenshot_b64 = base64.b64encode(screenshot).decode()
+
+                        # Send screenshot to frontend via progress callback
+                        _emit(
+                            f"📸 Screenshot captured at step {step + 1}",
+                            level="info",
+                            payload={
+                                "type": "screenshot",
+                                "image": screenshot_b64,
+                                "url": current_url,
+                                "step": step + 1
+                            }
+                        )
                     except Exception as screenshot_error:
                         error_text = str(screenshot_error)
                         errors.append(error_text)

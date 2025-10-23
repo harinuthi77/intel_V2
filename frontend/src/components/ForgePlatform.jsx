@@ -18,6 +18,9 @@ export default function ForgePlatform() {
   const [currentStep, setCurrentStep] = useState(null)
   const [taskResult, setTaskResult] = useState(null)
   const [error, setError] = useState(null)
+  const [currentScreenshot, setCurrentScreenshot] = useState(null)
+  const [showBrowserView, setShowBrowserView] = useState(true)
+  const [currentUrl, setCurrentUrl] = useState('')
   const textareaRef = useRef(null)
 
   const chatFolders = {
@@ -91,7 +94,9 @@ export default function ForgePlatform() {
     setIsActive(true)
     setError(null)
     setTaskResult(null)
-    
+    setCurrentScreenshot(null)
+    setCurrentUrl('')
+
     // Initialize execution steps
     const initialSteps = [
       { id: 1, action: 'Initializing agent', status: 'in-progress', timestamp: new Date() },
@@ -100,12 +105,13 @@ export default function ForgePlatform() {
       { id: 4, action: 'Gathering results', status: 'pending', timestamp: null },
       { id: 5, action: 'Finalizing output', status: 'pending', timestamp: null }
     ]
-    
+
     setExecutionSteps(initialSteps)
     setCurrentStep(initialSteps[0])
 
     try {
-      const response = await fetch(`${API_BASE_URL}/execute`, {
+      // Use EventSource for streaming
+      const response = await fetch(`${API_BASE_URL}/execute/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -113,43 +119,85 @@ export default function ForgePlatform() {
         body: JSON.stringify({
           task: task,
           model: model,
-          tools: activeTools
+          tools: activeTools,
+          headless: false,
+          max_steps: 40
         }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
+        const data = await response.json()
         throw new Error(data.detail || data.message || 'Task execution failed')
       }
 
-      if (!data.success) {
-        setTaskResult(data)
-        const failureMessage = data.message || 'Task execution failed'
-        setError(failureMessage)
-        setExecutionSteps(prev => prev.map(step =>
-          step.status === 'in-progress'
-            ? { ...step, status: 'error', timestamp: new Date() }
-            : { ...step, status: step.status === 'pending' ? 'error' : step.status }
-        ))
-        return
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) {
+          setIsActive(false)
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const eventData = JSON.parse(line.slice(6))
+
+            if (eventData.type === 'event') {
+              const event = eventData.event
+
+              // Handle screenshot updates
+              if (event.payload?.type === 'screenshot') {
+                setCurrentScreenshot(event.payload.image)
+                setCurrentUrl(event.payload.url)
+
+                // Update step status
+                setExecutionSteps(prev => prev.map((step, idx) =>
+                  idx === 2 ? { ...step, status: 'in-progress', timestamp: new Date() } :
+                  idx < 2 ? { ...step, status: 'completed', timestamp: new Date() } : step
+                ))
+              }
+
+              console.log('📡 Event:', event.message)
+            } else if (eventData.type === 'final') {
+              const result = eventData.result
+
+              if (result.success) {
+                const completedSteps = initialSteps.map(step => ({
+                  ...step,
+                  status: 'completed',
+                  timestamp: new Date()
+                }))
+                setExecutionSteps(completedSteps)
+                setTaskResult(result)
+                setCurrentStep(null)
+                console.log('✅ Task completed:', result)
+              } else {
+                setError(result.message || 'Task execution failed')
+                setExecutionSteps(prev => prev.map(step =>
+                  step.status === 'in-progress'
+                    ? { ...step, status: 'error', timestamp: new Date() }
+                    : step
+                ))
+              }
+            } else if (eventData.type === 'error') {
+              throw new Error(eventData.message)
+            }
+          }
+        }
       }
-
-      const completedSteps = initialSteps.map(step => ({
-        ...step,
-        status: 'completed',
-        timestamp: new Date()
-      }))
-
-      setExecutionSteps(completedSteps)
-      setTaskResult(data)
-      setCurrentStep(null)
-
-      console.log('✅ Task completed:', data)
 
     } catch (err) {
       console.error('❌ Error:', err)
       setError(err.message)
+      setIsActive(false)
 
       setExecutionSteps(prev => prev.map(step =>
         step.status === 'in-progress'
@@ -1225,24 +1273,129 @@ export default function ForgePlatform() {
           position: 'relative',
           overflow: 'hidden'
         }}>
-          {/* Animated glow */}
-          <div style={{
-            position: 'absolute',
-            inset: 0,
-            background: error 
-              ? 'radial-gradient(circle at center, rgba(239, 68, 68, 0.05) 0%, transparent 70%)'
-              : taskResult
-              ? 'radial-gradient(circle at center, rgba(34, 197, 94, 0.05) 0%, transparent 70%)'
-              : 'radial-gradient(circle at center, rgba(255, 138, 0, 0.05) 0%, transparent 70%)',
-            animation: error || taskResult ? 'none' : 'glow 3s ease-in-out infinite'
-          }} />
+          {/* Browser View - Show screenshot when available */}
+          {currentScreenshot && showBrowserView && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              background: '#0a0a0a'
+            }}>
+              {/* Browser URL Bar */}
+              <div style={{
+                padding: '12px 20px',
+                background: '#0d0d0d',
+                borderBottom: '1px solid #1a1a1a',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <Globe size={14} color="#666666" />
+                <div style={{
+                  flex: 1,
+                  padding: '8px 14px',
+                  background: '#000000',
+                  border: '1px solid #222222',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  color: '#888888',
+                  fontFamily: 'monospace',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {currentUrl || 'Loading...'}
+                </div>
+                <button
+                  onClick={() => setShowBrowserView(false)}
+                  style={{
+                    padding: '6px',
+                    background: 'transparent',
+                    border: '1px solid #222222',
+                    borderRadius: '4px',
+                    color: '#888888',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                >
+                  <Eye size={14} />
+                </button>
+              </div>
 
-          <div style={{
-            textAlign: 'center',
-            position: 'relative',
-            zIndex: 1
-          }}>
-            {!error && !taskResult && (
+              {/* Screenshot Display */}
+              <div style={{
+                flex: 1,
+                overflow: 'auto',
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'center',
+                padding: '20px',
+                background: '#000000'
+              }}>
+                <img
+                  src={`data:image/png;base64,${currentScreenshot}`}
+                  alt="Browser view"
+                  style={{
+                    maxWidth: '100%',
+                    height: 'auto',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+                    border: '1px solid #1a1a1a'
+                  }}
+                />
+              </div>
+
+              {/* Live Indicator */}
+              <div style={{
+                position: 'absolute',
+                top: '20px',
+                right: '20px',
+                padding: '6px 12px',
+                background: 'rgba(239, 68, 68, 0.9)',
+                borderRadius: '20px',
+                fontSize: '10px',
+                color: '#ffffff',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
+              }}>
+                <div style={{
+                  width: '6px',
+                  height: '6px',
+                  background: '#ffffff',
+                  borderRadius: '50%',
+                  animation: 'pulse 2s ease-in-out infinite'
+                }} />
+                LIVE
+              </div>
+            </div>
+          )}
+
+          {/* Animated glow */}
+          {!currentScreenshot && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: error
+                ? 'radial-gradient(circle at center, rgba(239, 68, 68, 0.05) 0%, transparent 70%)'
+                : taskResult
+                ? 'radial-gradient(circle at center, rgba(34, 197, 94, 0.05) 0%, transparent 70%)'
+                : 'radial-gradient(circle at center, rgba(255, 138, 0, 0.05) 0%, transparent 70%)',
+              animation: error || taskResult ? 'none' : 'glow 3s ease-in-out infinite'
+            }} />
+          )}
+
+          {!currentScreenshot && (
+            <div style={{
+              textAlign: 'center',
+              position: 'relative',
+              zIndex: 1
+            }}>
+              {!error && !taskResult && (
               <>
                 <div style={{
                   width: '60px',
@@ -1340,7 +1493,8 @@ export default function ForgePlatform() {
                 </div>
               </>
             )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Right - Artifact Preview (Optional) */}
