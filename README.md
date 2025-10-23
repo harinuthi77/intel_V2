@@ -13,14 +13,17 @@ The backend exposes the agent through a FastAPI service so the UI can trigger au
 
 ## 📚 Documentation
 
-- **[SETUP.md](./SETUP.md)** - **⭐ START HERE** - Complete local setup guide with examples
+- **[WINDOWS_SETUP.md](./WINDOWS_SETUP.md)** - **🪟 WINDOWS USERS START HERE** - Complete Windows setup guide
+- **[SETUP.md](./SETUP.md)** - **⭐ LINUX/MAC START HERE** - Complete local setup guide with examples
 - **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** - Quick start guide and troubleshooting
 - **[VALIDATION_CHECKLIST.md](./VALIDATION_CHECKLIST.md)** - System validation and test matrix
 - **[README.md](./README.md)** - This file (architecture overview)
 
-**First time user?** → Start with **[SETUP.md](./SETUP.md)** for step-by-step instructions
+**Windows user?** → Start with **[WINDOWS_SETUP.md](./WINDOWS_SETUP.md)** ← Fixed all Windows issues!
 
-**Having issues?** → Check **[SETUP.md](./SETUP.md)** troubleshooting section
+**Linux/Mac user?** → Start with **[SETUP.md](./SETUP.md)** for step-by-step instructions
+
+**Having issues?** → Check the troubleshooting section in your platform's setup guide
 
 ## 🎯 What Makes FORGE Special
 
