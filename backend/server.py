@@ -8,9 +8,12 @@ import logging
 from typing import Any, Dict, List
 from queue import Queue
 
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from adaptive_agent import AgentConfig, AgentResult, run_adaptive_agent
@@ -31,6 +34,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve frontend static files if available (Spring Boot style integration)
+STATIC_DIR = Path(__file__).parent / "static"
+if STATIC_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    logger.info(f"Serving frontend static files from {STATIC_DIR}")
 
 
 class ExecuteRequest(BaseModel):
@@ -179,6 +188,21 @@ async def navigate(request: NavigateRequest):
         "message": f"Navigation request acknowledged for: {request.url}",
         "note": "Full navigation support requires browser session management (coming soon)"
     }
+
+
+@app.get("/")
+async def serve_frontend():
+    """Serve the frontend index.html (Spring Boot style single app)."""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    else:
+        return {
+            "message": "Adaptive Agent Backend API",
+            "version": "1.0.0",
+            "note": "Frontend not built. Run 'npm run build' in frontend directory and copy dist/ to backend/static/",
+            "api_docs": "/docs"
+        }
 
 
 if __name__ == "__main__":
