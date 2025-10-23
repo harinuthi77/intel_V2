@@ -731,18 +731,20 @@ AVAILABLE ACTIONS:
 • goto <url> - Navigate to URL
 • click <id> - Click element
 • type <text> - Type in search/input (auto-finds input)
-• extract - Extract ALL data from current page intelligently
-• analyze - Analyze collected data and generate final results
-• done - Task complete with results
+• extract - Extract ALL data from current page intelligently (Claude filters for relevance)
+• analyze - Get intelligent recommendations from collected data (ONLY CALL ONCE)
+• done - Task complete with results (call immediately after analyze)
 
 🧠 INTELLIGENCE GUIDELINES:
 1. **Learn from context**: Use EXTRACTED DATA above to avoid redundant clicks
 2. **Be efficient**: Use 'extract' to gather data, don't click every item
 3. **Adapt if stuck**: If same action isn't working, try different approach
-4. **Validate results**: Before 'done', ensure you have meaningful data
-5. **Think strategically**: What's the fastest path to complete results?
+4. **ONE analyze call**: After collecting enough data, call analyze ONCE to get recommendations
+5. **Finish immediately**: Call "done" RIGHT AFTER analyze - don't repeat analyze!
 
-⚡ CRITICAL: Your goal is RESULTS, not just actions. Don't say "done" without deliverables!
+⚡ CRITICAL: Your goal is RESULTS, not endless actions!
+⚡ WORKFLOW: navigate → extract data → analyze ONCE → done
+⚡ NEVER call "analyze" multiple times - it's a waste! Once you have recommendations, call "done"!
 
 What's your next intelligent action?
 
@@ -826,23 +828,87 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
                         elif action == "extract":
                             extracted = extract_structured_data(page)
-                            new_items = extracted['products']
+                            raw_items = extracted['products']
 
-                            if new_items:
+                            if raw_items:
+                                print(f"📦 Extracted {len(raw_items)} raw items from page")
+
+                                # Use Claude to filter for relevant items
+                                items_preview = []
+                                for i, item in enumerate(raw_items[:30], 1):  # Preview first 30
+                                    preview = f"{i}. {item.get('name', 'Unknown')[:80]}"
+                                    if item.get('price'):
+                                        preview += f" - ${item['price']}"
+                                    items_preview.append(preview)
+
+                                filter_prompt = f"""Task: {task}
+
+I just extracted {len(raw_items)} items from a webpage. Here are the first 30:
+
+{chr(10).join(items_preview)}
+
+Question: Which of these items are RELEVANT to the task "{task}"?
+
+Rules:
+- Only include items that match the task requirements (correct category, size, price range, etc.)
+- Exclude irrelevant products (wrong category, wrong size, out of budget)
+- Be strict - when in doubt, exclude it
+
+Respond with ONLY the item numbers that are relevant, comma-separated. For example: "1,5,7,12,15,18"
+If NONE are relevant, respond with: "NONE"
+"""
+
+                                try:
+                                    # Ask Claude to filter
+                                    filter_response = client.messages.create(
+                                        model=anthropic_model,
+                                        max_tokens=500,
+                                        messages=[{
+                                            "role": "user",
+                                            "content": filter_prompt
+                                        }]
+                                    )
+
+                                    filter_result = filter_response.content[0].text.strip()
+                                    print(f"🧠 Claude's relevance filter: {filter_result}")
+
+                                    # Parse the response
+                                    if filter_result.upper() == "NONE":
+                                        print("⚠️ Claude says: No relevant items found")
+                                        new_items = []
+                                    else:
+                                        # Extract item numbers
+                                        try:
+                                            relevant_indices = [int(x.strip()) - 1 for x in filter_result.split(',') if x.strip().isdigit()]
+                                            new_items = [raw_items[i] for i in relevant_indices if i < len(raw_items)]
+                                            print(f"✓ Claude filtered: {len(new_items)} relevant items out of {len(raw_items)}")
+                                        except:
+                                            # Fallback: keep all items if parsing fails
+                                            print("⚠️ Filter parsing failed, keeping all items")
+                                            new_items = raw_items
+                                except Exception as e:
+                                    print(f"⚠️ Claude filter failed: {str(e)}, keeping all items")
+                                    new_items = raw_items
+
                                 # Avoid duplicates
-                                existing_urls = {item.get('url') for item in collected_data}
-                                new_items = [item for item in new_items if item.get('url') not in existing_urls]
+                                if new_items:
+                                    existing_urls = {item.get('url') for item in collected_data}
+                                    new_items = [item for item in new_items if item.get('url') not in existing_urls]
 
-                                collected_data.extend(new_items)
-                                print(f"✓ Extracted {len(new_items)} new items (Total: {len(collected_data)})")
-                                reflection.progress_metrics['data_extracted'] = len(collected_data)
-                                success = True
+                                    collected_data.extend(new_items)
+                                    print(f"✓ Added {len(new_items)} new relevant items (Total: {len(collected_data)})")
+                                    reflection.progress_metrics['data_extracted'] = len(collected_data)
+                                    success = True
+                                else:
+                                    print("⚠️ No relevant items after filtering")
+                                    success = False
                             else:
                                 print("⚠️ No data extracted - may need different approach")
                                 learn_from_failure(learning_db, task_type, current_domain, 'extract',
                                                  'no_data', json.dumps({'url': current_url}))
+                                success = False
 
-                            reflection.record_action('extract', success, len(new_items) if success else 0)
+                            reflection.record_action('extract', success, len(new_items) if success and new_items else 0)
                             time.sleep(1)
 
                         elif action == "analyze":
@@ -852,27 +918,89 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                                 continue
 
                             print("\n" + "="*70)
-                            print("📊 DATA ANALYSIS")
+                            print("📊 INTELLIGENT DATA ANALYSIS (Using Claude's Reasoning)")
                             print("="*70)
                             print(f"Total items collected: {len(collected_data)}\n")
 
-                            # Sort by relevance
-                            sorted_data = sorted(collected_data,
-                                               key=lambda x: (x.get('rating', 0), x.get('reviews', 0)),
-                                               reverse=True)
-
-                            print("🏆 TOP MATCHES:")
-                            for i, item in enumerate(sorted_data[:10], 1):
-                                print(f"\n{i}. {item.get('name', 'Unknown')}")
+                            # Prepare data for Claude to analyze
+                            items_for_analysis = []
+                            for i, item in enumerate(collected_data[:50], 1):  # Limit to 50 to avoid token limits
+                                item_summary = f"{i}. {item.get('name', 'Unknown')}"
                                 if item.get('price'):
-                                    print(f"   💰 ${item['price']}")
+                                    item_summary += f" - ${item['price']}"
                                 if item.get('rating'):
-                                    print(f"   ⭐ {item['rating']}/5")
+                                    item_summary += f" - ⭐{item['rating']}"
                                 if item.get('reviews'):
-                                    print(f"   💬 {item['reviews']:,} reviews")
+                                    item_summary += f" ({item['reviews']} reviews)"
+                                items_for_analysis.append(item_summary)
 
-                            success = True
-                            reflection.record_action('analyze', True)
+                            # Ask Claude to intelligently filter and rank
+                            analysis_prompt = f"""You are analyzing collected product data for this task: {task}
+
+I collected {len(collected_data)} items from the website. Here are the first 50:
+
+{chr(10).join(items_for_analysis)}
+
+Your job:
+1. **Filter**: Identify which items are RELEVANT to the task "{task}". Remove items that don't match (wrong category, wrong size, out of budget, etc.)
+2. **Rank**: Rank the relevant items by best value (considering price, ratings, reviews, features)
+3. **Recommend**: Provide the TOP 3-5 specific recommendations with:
+   - Item number from the list above
+   - Product name
+   - Why it's a good choice
+   - Final recommendation for the BEST option
+
+Be specific. Reference item numbers from the list. If no items match the criteria, say so clearly.
+
+Format your response as:
+RELEVANT ITEMS: [list item numbers that match]
+TOP RECOMMENDATIONS:
+1. Item #X - [name] - [why it's good]
+2. Item #Y - [name] - [why it's good]
+...
+BEST CHOICE: Item #Z because [clear reasoning]"""
+
+                            try:
+                                # Use Claude to analyze
+                                analysis_response = client.messages.create(
+                                    model=anthropic_model,
+                                    max_tokens=2000,
+                                    messages=[{
+                                        "role": "user",
+                                        "content": analysis_prompt
+                                    }]
+                                )
+
+                                analysis_result = analysis_response.content[0].text
+                                print("\n🧠 CLAUDE'S ANALYSIS:")
+                                print("="*70)
+                                print(analysis_result)
+                                print("="*70)
+
+                                # Store analysis in metadata
+                                reflection.progress_metrics['intelligent_analysis'] = analysis_result
+
+                                success = True
+                                reflection.record_action('analyze_intelligent', True)
+                            except Exception as e:
+                                print(f"❌ Analysis failed: {str(e)}")
+                                # Fallback to simple display
+                                print("🏆 TOP ITEMS (Simple Sort):")
+                                sorted_data = sorted(collected_data,
+                                                   key=lambda x: (x.get('rating', 0), x.get('reviews', 0)),
+                                                   reverse=True)
+                                for i, item in enumerate(sorted_data[:10], 1):
+                                    print(f"\n{i}. {item.get('name', 'Unknown')}")
+                                    if item.get('price'):
+                                        print(f"   💰 ${item['price']}")
+                                    if item.get('rating'):
+                                        print(f"   ⭐ {item['rating']}/5")
+                                    if item.get('reviews'):
+                                        print(f"   💬 {item['reviews']:,} reviews")
+
+                                success = False
+                                reflection.record_action('analyze', False)
+
                             time.sleep(2)
 
                         elif action == "goto":
