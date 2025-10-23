@@ -182,7 +182,7 @@ def get_learned_strategies(conn, task_type: str, domain: str) -> List[Dict]:
         ORDER BY success_rate DESC, times_used DESC
         LIMIT 3
     ''', (task_type, domain))
-    
+
     strategies = []
     for row in cursor.fetchall():
         strategies.append({
@@ -192,8 +192,81 @@ def get_learned_strategies(conn, task_type: str, domain: str) -> List[Dict]:
             'avg_steps': row[3],
             'notes': row[4]
         })
-    
+
     return strategies
+
+
+def get_past_failures(conn, domain: str) -> List[Dict]:
+    """Retrieve past failures to avoid repeating mistakes"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT action, error_type, context, COUNT(*) as occurrences
+        FROM failures
+        WHERE website_domain = ?
+        GROUP BY action, error_type
+        ORDER BY occurrences DESC
+        LIMIT 5
+    ''', (domain,))
+
+    failures = []
+    for row in cursor.fetchall():
+        failures.append({
+            'action': row[0],
+            'error_type': row[1],
+            'context': row[2],
+            'occurrences': row[3]
+        })
+
+    return failures
+
+
+def get_site_patterns(conn, domain: str) -> List[Dict]:
+    """Retrieve site-specific element patterns"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT element_type, selector_patterns, success_count
+        FROM site_patterns
+        WHERE website_domain = ?
+        ORDER BY success_count DESC
+        LIMIT 5
+    ''', (domain,))
+
+    patterns = []
+    for row in cursor.fetchall():
+        patterns.append({
+            'element_type': row[0],
+            'selector_patterns': row[1],
+            'success_count': row[2]
+        })
+
+    return patterns
+
+
+def get_similar_past_results(conn, task_type: str) -> List[Dict]:
+    """Retrieve successful results from similar tasks"""
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT task, result_data, confidence
+        FROM results
+        WHERE result_type = 'completion'
+        ORDER BY timestamp DESC
+        LIMIT 3
+    ''', ())
+
+    results = []
+    for row in cursor.fetchall():
+        # Only include if task similarity is high
+        if task_type.lower() in row[0].lower():
+            try:
+                results.append({
+                    'task': row[0],
+                    'result_data': json.loads(row[1]) if isinstance(row[1], str) else row[1],
+                    'confidence': row[2]
+                })
+            except:
+                pass
+
+    return results
 
 def save_result(conn, session_id: str, task: str, result_data: any, confidence: float):
     """Save final results with confidence score"""
@@ -649,13 +722,37 @@ def run_adaptive_agent(
                     elements = detect_elements_smart(page)
                     print(f"🔍 Detected {len(elements)} interactive elements")
 
-                    # Get learned strategies
+                    # Get comprehensive memory recall
                     strategies = get_learned_strategies(learning_db, task_type, current_domain)
-                    strategy_text = ""
+                    failures = get_past_failures(learning_db, current_domain)
+                    site_patterns = get_site_patterns(learning_db, current_domain)
+                    past_results = get_similar_past_results(learning_db, task_type)
+
+                    # Build memory context for Claude
+                    memory_text = ""
+
                     if strategies:
-                        strategy_text = "\n\n🎓 LEARNED STRATEGIES for this site:\n"
+                        memory_text += "\n\n🎓 LEARNED STRATEGIES (Proven approaches for this site):\n"
                         for i, s in enumerate(strategies, 1):
-                            strategy_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+                            memory_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+
+                    if failures:
+                        memory_text += "\n\n⚠️ PAST FAILURES TO AVOID:\n"
+                        for i, f in enumerate(failures, 1):
+                            memory_text += f"{i}. Action '{f['action']}' failed {f['occurrences']}x with error: {f['error_type']}\n"
+
+                    if site_patterns:
+                        memory_text += "\n\n🔍 SITE-SPECIFIC PATTERNS:\n"
+                        for i, p in enumerate(site_patterns, 1):
+                            memory_text += f"{i}. {p['element_type']}: {p['selector_patterns']} (Success: {p['success_count']}x)\n"
+
+                    if past_results:
+                        memory_text += "\n\n💡 SIMILAR PAST SUCCESSES:\n"
+                        for i, r in enumerate(past_results, 1):
+                            memory_text += f"{i}. Task: '{r['task'][:50]}...' (Confidence: {r['confidence']*100:.0f}%)\n"
+
+                    if memory_text:
+                        memory_text = "\n" + "="*70 + "\n🧠 MEMORY RECALL - Learn from past experience!\n" + "="*70 + memory_text
 
                     # Draw labels
                     draw_labels(page, elements)
@@ -722,7 +819,7 @@ def run_adaptive_agent(
 📍 Current URL: {page.url}
 🌐 Domain: {current_domain}
 
-{reflection.get_progress_summary()}{results_summary}{strategy_text}
+{reflection.get_progress_summary()}{results_summary}{memory_text}
 
 🔍 VISIBLE ELEMENTS (color-coded on screenshot):
 {chr(10).join(elem_list)}
