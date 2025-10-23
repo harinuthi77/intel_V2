@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2 } from 'lucide-react'
+import LiveBrowserView from './LiveBrowserView'
 
 // API Configuration - Auto-detect for integrated mode, fallback to dev mode
 const API_BASE_URL = window.location.port === '5173'
@@ -1501,38 +1502,9 @@ export default function ForgePlatform() {
                 overflow: 'auto',
                 background: '#000000'
               }}>
-                {/* Browser View */}
+                {/* Browser View - Live Streaming via CDP */}
                 {activeView === 'browser' && (
-                  <div style={{
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'center',
-                    padding: '20px'
-                  }}>
-                    {currentScreenshot ? (
-                      <img
-                        src={`data:image/png;base64,${currentScreenshot}`}
-                        alt="Browser view"
-                        style={{
-                          maxWidth: '100%',
-                          height: 'auto',
-                          borderRadius: '8px',
-                          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                          border: '1px solid #1a1a1a'
-                        }}
-                      />
-                    ) : (
-                      <div style={{
-                        textAlign: 'center',
-                        color: '#666666',
-                        padding: '40px'
-                      }}>
-                        <Globe size={48} color="#333333" style={{ marginBottom: '16px' }} />
-                        <div style={{ fontSize: '14px' }}>Waiting for browser to load...</div>
-                      </div>
-                    )}
-                  </div>
+                  <LiveBrowserView />
                 )}
 
                 {/* Terminal View */}
