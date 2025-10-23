@@ -1,10 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2 } from 'lucide-react'
 
-// API Configuration - Auto-detect for integrated mode, fallback to dev mode
-const API_BASE_URL = window.location.port === '5173'
-  ? 'http://localhost:8000'  // Development mode (Vite dev server)
-  : window.location.origin     // Integrated mode (served from backend)
+// API Configuration - Change port here if needed
+const API_BASE_URL = 'http://localhost:8000'
 
 export default function ForgePlatform() {
   const [task, setTask] = useState('')
