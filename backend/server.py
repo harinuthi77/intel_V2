@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
+# IMPORTANT: Add parent directory to Python path FIRST (before any other imports)
+import sys
+from pathlib import Path
+
+# Get absolute path to parent directory (where adaptive_agent.py lives)
+BACKEND_DIR = Path(__file__).resolve().parent
+PARENT_DIR = BACKEND_DIR.parent
+
+# Add parent directory to Python path if not already there
+if str(PARENT_DIR) not in sys.path:
+    sys.path.insert(0, str(PARENT_DIR))
+
+# Now we can import from parent directory
 import asyncio
 import json
 import logging
-import sys
 from typing import Any, Dict, List
 from queue import Queue
-
-from pathlib import Path
-
-# Add parent directory to Python path to import adaptive_agent
-parent_dir = Path(__file__).parent.parent
-sys.path.insert(0, str(parent_dir))
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,10 +58,12 @@ app.add_middleware(
 )
 
 # Serve frontend static files if available (Spring Boot style integration)
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = BACKEND_DIR / "static"
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
-    logger.info(f"Serving frontend static files from {STATIC_DIR}")
+    logger.info(f"✅ Serving frontend static files from {STATIC_DIR}")
+else:
+    logger.warning(f"⚠️  Static directory not found: {STATIC_DIR}")
 
 
 class ExecuteRequest(BaseModel):
