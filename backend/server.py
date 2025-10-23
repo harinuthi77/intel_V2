@@ -15,6 +15,9 @@ from pydantic import BaseModel, Field
 
 from adaptive_agent import AgentConfig, AgentResult, run_adaptive_agent
 
+# Global browser session management (TODO: implement proper session handling)
+active_sessions = {}
+
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
 
@@ -53,6 +56,13 @@ class ExecuteResponse(BaseModel):
     logs: List[Dict[str, Any]]
     errors: List[str]
     metadata: Dict[str, Any]
+
+
+class NavigateRequest(BaseModel):
+    """Payload for manual navigation during Take Control mode."""
+
+    url: str = Field(..., description="URL to navigate to")
+    session_id: str = Field(default="", description="Session ID (optional)")
 
 
 def _log_event(event: Dict[str, Any]) -> None:
@@ -144,6 +154,31 @@ async def execute_stream(request: ExecuteRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+@app.post("/navigate")
+async def navigate(request: NavigateRequest):
+    """Navigate browser to specified URL during manual control mode.
+
+    Note: This is a placeholder implementation. Full functionality requires
+    persistent browser sessions with proper session management.
+
+    TODO: Implement proper browser session handling to enable real-time navigation.
+    """
+    logger.info(f"Navigation request received: {request.url}")
+
+    # TODO: Implement actual browser navigation
+    # For now, just acknowledge the request
+    # Future implementation will:
+    # 1. Look up active browser session by session_id
+    # 2. Navigate the browser to the requested URL
+    # 3. Capture and return screenshot
+
+    return {
+        "success": True,
+        "message": f"Navigation request acknowledged for: {request.url}",
+        "note": "Full navigation support requires browser session management (coming soon)"
+    }
 
 
 if __name__ == "__main__":

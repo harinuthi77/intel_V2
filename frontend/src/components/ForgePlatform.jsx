@@ -21,6 +21,7 @@ export default function ForgePlatform() {
   const [currentScreenshot, setCurrentScreenshot] = useState(null)
   const [showBrowserView, setShowBrowserView] = useState(true)
   const [currentUrl, setCurrentUrl] = useState('')
+  const [manualControl, setManualControl] = useState(false)
   const textareaRef = useRef(null)
 
   const chatFolders = {
@@ -86,6 +87,23 @@ export default function ForgePlatform() {
   const deleteChat = (chatName, e) => {
     e.stopPropagation()
     console.log('Delete chat:', chatName)
+  }
+
+  const handleTakeControl = () => {
+    setManualControl(!manualControl)
+    setIsPaused(!manualControl)
+  }
+
+  const handleNavigate = async (url) => {
+    try {
+      await fetch(`${API_BASE_URL}/navigate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      })
+    } catch (err) {
+      console.error('Navigation failed:', err)
+    }
   }
 
   const handleSend = async () => {
@@ -1308,6 +1326,26 @@ export default function ForgePlatform() {
                   {currentUrl || 'Loading...'}
                 </div>
                 <button
+                  onClick={handleTakeControl}
+                  style={{
+                    padding: '6px 12px',
+                    background: manualControl ? 'rgba(147, 51, 234, 0.2)' : 'transparent',
+                    border: `1px solid ${manualControl ? '#9333ea' : '#222222'}`,
+                    borderRadius: '4px',
+                    color: manualControl ? '#a855f7' : '#888888',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '11px',
+                    fontWeight: '500',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  <Hammer size={14} />
+                  {manualControl ? 'Release' : 'Take Control'}
+                </button>
+                <button
                   onClick={() => setShowBrowserView(false)}
                   style={{
                     padding: '6px',
@@ -1372,6 +1410,152 @@ export default function ForgePlatform() {
                 }} />
                 LIVE
               </div>
+
+              {/* Manual Control Overlay */}
+              {manualControl && (
+                <div style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'rgba(0, 0, 0, 0.8)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 100
+                }}>
+                  <div style={{
+                    background: '#0d0d0d',
+                    border: '1px solid #9333ea',
+                    borderRadius: '12px',
+                    padding: '32px',
+                    maxWidth: '500px',
+                    width: '90%',
+                    boxShadow: '0 20px 60px rgba(147, 51, 234, 0.3)'
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      marginBottom: '24px'
+                    }}>
+                      <Hammer size={20} color="#a855f7" />
+                      <h3 style={{
+                        margin: 0,
+                        fontSize: '18px',
+                        color: '#ffffff',
+                        fontWeight: '600'
+                      }}>Manual Control Mode</h3>
+                    </div>
+
+                    <p style={{
+                      color: '#888888',
+                      fontSize: '13px',
+                      marginBottom: '20px',
+                      lineHeight: '1.6'
+                    }}>
+                      Agent execution is paused. Navigate the browser manually or resume automation.
+                    </p>
+
+                    <div style={{ marginBottom: '20px' }}>
+                      <label style={{
+                        display: 'block',
+                        color: '#aaaaaa',
+                        fontSize: '12px',
+                        marginBottom: '8px',
+                        fontWeight: '500'
+                      }}>
+                        Navigate to URL:
+                      </label>
+                      <form onSubmit={(e) => {
+                        e.preventDefault()
+                        const url = e.target.manualUrl.value
+                        if (url) {
+                          handleNavigate(url)
+                          e.target.manualUrl.value = ''
+                        }
+                      }}>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <input
+                            type="text"
+                            name="manualUrl"
+                            placeholder="https://example.com"
+                            style={{
+                              flex: 1,
+                              padding: '10px 14px',
+                              background: '#000000',
+                              border: '1px solid #222222',
+                              borderRadius: '6px',
+                              color: '#ffffff',
+                              fontSize: '13px',
+                              outline: 'none'
+                            }}
+                            onFocus={(e) => e.target.style.borderColor = '#9333ea'}
+                            onBlur={(e) => e.target.style.borderColor = '#222222'}
+                          />
+                          <button
+                            type="submit"
+                            style={{
+                              padding: '10px 20px',
+                              background: '#9333ea',
+                              border: 'none',
+                              borderRadius: '6px',
+                              color: '#ffffff',
+                              fontSize: '13px',
+                              fontWeight: '500',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap'
+                            }}
+                          >
+                            Go
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      gap: '12px',
+                      marginTop: '24px'
+                    }}>
+                      <button
+                        onClick={handleTakeControl}
+                        style={{
+                          flex: 1,
+                          padding: '12px',
+                          background: '#9333ea',
+                          border: 'none',
+                          borderRadius: '6px',
+                          color: '#ffffff',
+                          fontSize: '13px',
+                          fontWeight: '600',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Resume Automation
+                      </button>
+                      <button
+                        onClick={() => {
+                          setManualControl(false)
+                          setIsPaused(false)
+                          setIsActive(false)
+                        }}
+                        style={{
+                          padding: '12px 20px',
+                          background: 'transparent',
+                          border: '1px solid #222222',
+                          borderRadius: '6px',
+                          color: '#888888',
+                          fontSize: '13px',
+                          fontWeight: '500',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Stop
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
