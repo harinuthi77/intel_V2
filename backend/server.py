@@ -5,10 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from typing import Any, Dict, List
 from queue import Queue
 
 from pathlib import Path
+
+# Add parent directory to Python path to import adaptive_agent
+parent_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(parent_dir))
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
