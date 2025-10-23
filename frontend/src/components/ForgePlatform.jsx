@@ -28,6 +28,8 @@ export default function ForgePlatform() {
   const [terminalOutput, setTerminalOutput] = useState([])
   const [codeOutput, setCodeOutput] = useState([])
   const [analyticsData, setAnalyticsData] = useState(null)
+  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [isResizing, setIsResizing] = useState(false)
   const textareaRef = useRef(null)
 
   const chatFolders = {
@@ -112,6 +114,37 @@ export default function ForgePlatform() {
     }
   }
 
+  // Resize handlers for sidebar
+  const handleMouseDown = (e) => {
+    setIsResizing(true)
+    e.preventDefault()
+  }
+
+  const handleMouseMove = (e) => {
+    if (isResizing) {
+      const newWidth = e.clientX
+      // Constrain width between 200px and 500px
+      if (newWidth >= 200 && newWidth <= 500) {
+        setSidebarWidth(newWidth)
+      }
+    }
+  }
+
+  const handleMouseUp = () => {
+    setIsResizing(false)
+  }
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [isResizing, sidebarWidth])
+
   const handleSend = async () => {
     if (!task.trim()) return
 
@@ -179,8 +212,15 @@ export default function ForgePlatform() {
 
               // Handle screenshot updates
               if (event.payload?.type === 'screenshot') {
+                console.log('📸 Screenshot received:', {
+                  url: event.payload.url,
+                  imageLength: event.payload.image?.length,
+                  step: event.payload.step
+                })
                 setCurrentScreenshot(event.payload.image)
-                setCurrentUrl(event.payload.url)
+                setCurrentUrl(event.payload.url || '')
+                setShowBrowserView(true)
+                setActiveView('browser')
 
                 // Update step status
                 setExecutionSteps(prev => prev.map((step, idx) =>
@@ -1133,13 +1173,15 @@ export default function ForgePlatform() {
         display: 'flex',
         overflow: 'hidden'
       }}>
-        {/* Left - Timeline (20%) */}
+        {/* Left - Timeline (Resizable) */}
         <div style={{
-          width: '280px',
+          width: `${sidebarWidth}px`,
           background: 'linear-gradient(180deg, #0d0d0d 0%, #0a0a0a 100%)',
           borderRight: '1px solid #1a1a1a',
           padding: '24px',
-          overflowY: 'auto'
+          overflowY: 'auto',
+          transition: isResizing ? 'none' : 'width 0.1s ease',
+          userSelect: isResizing ? 'none' : 'auto'
         }}>
           <div style={{
             fontSize: '10px',
@@ -1313,6 +1355,42 @@ export default function ForgePlatform() {
               })}
             </div>
           </div>
+        </div>
+
+        {/* Resize Handle */}
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            width: '4px',
+            background: isResizing ? 'rgba(255, 138, 0, 0.5)' : 'transparent',
+            cursor: 'col-resize',
+            flexShrink: 0,
+            position: 'relative',
+            transition: 'background 0.2s',
+            userSelect: 'none'
+          }}
+          onMouseEnter={(e) => {
+            if (!isResizing) {
+              e.currentTarget.style.background = 'rgba(255, 138, 0, 0.3)'
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isResizing) {
+              e.currentTarget.style.background = 'transparent'
+            }
+          }}
+        >
+          {/* Visual indicator */}
+          <div style={{
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            width: '2px',
+            height: '40px',
+            background: '#333333',
+            borderRadius: '2px'
+          }} />
         </div>
 
         {/* Center - Live View (80%) */}
