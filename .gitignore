@@ -1,5 +1,53 @@
+# Python
 __pycache__/
+*.py[cod]
 *.pyc
-node_modules/
-.env
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 .venv/
+venv/
+ENV/
+.env
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Frontend build
+frontend/dist/
+
+# Backend static (generated)
+backend/static/
+
+# IDEs
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Playwright
+.playwright/
+playwright-report/
+test-results/
