@@ -102,7 +102,6 @@ export default function ForgePlatform() {
     setCurrentStep(initialSteps[0])
 
     try {
-      // Call backend API
       const response = await fetch('http://localhost:8000/execute', {
         method: 'POST',
         headers: {
@@ -115,32 +114,42 @@ export default function ForgePlatform() {
         }),
       })
 
+      const data = await response.json()
+
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Task execution failed')
+        throw new Error(data.detail || data.message || 'Task execution failed')
       }
 
-      const data = await response.json()
-      
-      // Update steps to completed
+      if (!data.success) {
+        setTaskResult(data)
+        const failureMessage = data.message || 'Task execution failed'
+        setError(failureMessage)
+        setExecutionSteps(prev => prev.map(step =>
+          step.status === 'in-progress'
+            ? { ...step, status: 'error', timestamp: new Date() }
+            : { ...step, status: step.status === 'pending' ? 'error' : step.status }
+        ))
+        return
+      }
+
       const completedSteps = initialSteps.map(step => ({
         ...step,
         status: 'completed',
         timestamp: new Date()
       }))
-      
+
       setExecutionSteps(completedSteps)
       setTaskResult(data)
-      
+      setCurrentStep(null)
+
       console.log('✅ Task completed:', data)
-      
+
     } catch (err) {
       console.error('❌ Error:', err)
       setError(err.message)
-      
-      // Mark current step as error
-      setExecutionSteps(prev => prev.map(step => 
-        step.status === 'in-progress' 
+
+      setExecutionSteps(prev => prev.map(step =>
+        step.status === 'in-progress'
           ? { ...step, status: 'error', timestamp: new Date() }
           : step
       ))
@@ -1148,6 +1157,8 @@ export default function ForgePlatform() {
                   lineHeight: '1.4'
                 }}>
                   Mode: {taskResult.mode}
+                  <br />
+                  Summary: {taskResult.progress_summary || 'No progress summary available'}
                 </div>
               </div>
             </div>
@@ -1321,6 +1332,8 @@ export default function ForgePlatform() {
                   color: '#888888'
                 }}>
                   {taskResult.message}
+                  <br />
+                  Session: {taskResult.session_id}
                 </div>
               </>
             )}
@@ -1378,10 +1391,23 @@ export default function ForgePlatform() {
               color: '#888888',
               lineHeight: '1.6'
             }}>
-              {taskResult && taskResult.data ? (
-                <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
-                  {JSON.stringify(taskResult.data, null, 2)}
-                </pre>
+              {taskResult ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Progress Logs</div>
+                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
+                      {(taskResult.logs || []).map((event, idx) => `${idx + 1}. [${event.level?.toUpperCase() || 'INFO'}] ${event.message}`).join('\n') || 'No logs captured.'}
+                    </pre>
+                  </div>
+                  <div>
+                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Collected Data</div>
+                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
+                      {taskResult.data && taskResult.data.length > 0
+                        ? JSON.stringify(taskResult.data, null, 2)
+                        : 'No structured data captured.'}
+                    </pre>
+                  </div>
+                </div>
               ) : (
                 <div style={{ color: '#666666' }}>
                   Waiting for output...
