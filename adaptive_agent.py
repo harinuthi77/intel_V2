@@ -7,9 +7,53 @@ import random
 import json
 import sqlite3
 from datetime import datetime
-from typing import Dict, List, Tuple, Optional
+import sys
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Tuple, Optional, Union
+import builtins
 
 client = anthropic.Anthropic()
+
+
+@dataclass
+class AgentConfig:
+    """Input payload used to execute the adaptive agent."""
+
+    task: str
+    model: str = "claude"
+    tools: List[str] = field(default_factory=list)
+    max_steps: int = 40
+    headless: bool = False
+
+
+@dataclass
+class AgentResult:
+    """Structured response returned by the adaptive agent."""
+
+    success: bool
+    status: str
+    message: str
+    mode: str
+    session_id: str
+    data: List[Dict[str, Any]] = field(default_factory=list)
+    progress_summary: str = ""
+    logs: List[Dict[str, Any]] = field(default_factory=list)
+    errors: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "success": self.success,
+            "status": self.status,
+            "message": self.message,
+            "mode": self.mode,
+            "session_id": self.session_id,
+            "data": self.data,
+            "progress_summary": self.progress_summary,
+            "logs": self.logs,
+            "errors": self.errors,
+            "metadata": self.metadata,
+        }
 
 # ============ LEARNING DATABASE ============
 def init_learning_db():
@@ -483,116 +527,183 @@ def remove_labels(page):
         pass
 
 # ============ MAIN ADAPTIVE AGENT ============
-def adaptive_agent(task: str):
-    """Self-learning agent that adapts and guarantees results"""
-    
-    # Initialize learning database
-    learning_db = init_learning_db()
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    reflection = AgentReflection(learning_db)
-    
-    print(f"🧠 ADAPTIVE WEB AGENT - Session: {session_id}")
-    print(f"🎯 TASK: {task}\n")
-    
-    # Extract task type and domain
-    task_type = "search" if "search" in task.lower() or "find" in task.lower() else "navigate"
-    
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=['--disable-blink-features=AutomationControlled']
-        )
-        context = browser.new_context(
-            viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        )
-        page = context.new_page()
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-        
-        conversation_history = []
-        collected_data = []
-        last_url = ""
-        current_domain = ""
-        action_sequence = []
-        
-        MAX_STEPS = 40
-        
-        for step in range(MAX_STEPS):
-            print(f"\n{'='*70}\nSTEP {step + 1}/{MAX_STEPS}\n{'='*70}")
-            
-            time.sleep(random.uniform(1.0, 1.8))
-            
-            # Check if URL changed
-            current_url = page.url
-            if current_url != last_url:
-                current_domain = page.evaluate("() => window.location.hostname")
-                print(f"📍 URL: {current_url[:80]}")
-                last_url = current_url
-                reflection.progress_metrics['pages_visited'] += 1
-                
-                # Auto-extract data from new page
-                extracted = extract_structured_data(page)
-                if extracted['products']:
-                    print(f"🔍 Auto-extracted {len(extracted['products'])} items from page")
-                    collected_data.extend(extracted['products'])
-                    reflection.progress_metrics['data_extracted'] = len(collected_data)
-            
-            # Check if stuck
-            is_stuck, stuck_reason = reflection.is_stuck()
-            if is_stuck:
-                print(f"⚠️ STUCK DETECTED: {stuck_reason}")
-                print(f"💡 Suggestion: {reflection.suggest_alternative('navigation')}")
-            
-            # Detect elements
-            elements = detect_elements_smart(page)
-            print(f"🔍 Detected {len(elements)} interactive elements")
-            
-            # Get learned strategies
-            strategies = get_learned_strategies(learning_db, task_type, current_domain)
-            strategy_text = ""
-            if strategies:
-                strategy_text = "\n\n🎓 LEARNED STRATEGIES for this site:\n"
-                for i, s in enumerate(strategies, 1):
-                    strategy_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
-            
-            # Draw labels
-            draw_labels(page, elements)
-            time.sleep(0.4)
-            
-            # Screenshot
+def run_adaptive_agent(
+    config: Union[AgentConfig, Dict[str, Any], str],
+    progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> AgentResult:
+    """Execute the adaptive agent with a structured payload and capture progress."""
+
+    if isinstance(config, str):
+        config = AgentConfig(task=config)
+    elif isinstance(config, dict):
+        config = AgentConfig(**config)
+
+    # Normalize anthropic model name for compatibility with legacy callers
+    anthropic_model = (
+        "claude-sonnet-4-5-20250929" if config.model == "claude" else config.model
+    )
+
+    progress_events: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    original_print = builtins.print
+
+    def _emit(message: str, level: str = "info", payload: Optional[Dict[str, Any]] = None):
+        event = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "message": message,
+            "level": level,
+        }
+        if payload:
+            event["payload"] = payload
+        progress_events.append(event)
+        if progress_callback:
             try:
-                screenshot = page.screenshot()
-                screenshot_b64 = base64.b64encode(screenshot).decode()
-            except:
-                break
-            
-            remove_labels(page)
-            
-            # Build focused element list (prioritize visible, important elements)
-            visible_elements = [e for e in elements if e['visible']][:30]
-            elem_list = []
-            for el in visible_elements:
-                desc = f"[{el['id']}] {el['tag']}"
-                if el['type']: desc += f" type={el['type']}"
-                if el['role']: desc += f" role={el['role']}"
-                if el['text']: desc += f": {el['text'][:60]}"
-                elem_list.append(desc)
-            
-            # Build results summary
-            results_summary = ""
-            if collected_data:
-                results_summary = f"\n\n📦 COLLECTED DATA ({len(collected_data)} items):\n"
-                for i, item in enumerate(collected_data[:5], 1):
-                    results_summary += f"{i}. {item.get('name', 'Unknown')[:50]}"
-                    if item.get('price'): results_summary += f" - ${item['price']}"
-                    if item.get('rating'): results_summary += f" ⭐{item['rating']}"
-                    if item.get('reviews'): results_summary += f" ({item['reviews']} reviews)"
-                    results_summary += "\n"
-                if len(collected_data) > 5:
-                    results_summary += f"... and {len(collected_data) - 5} more items\n"
-            
-            # Enhanced prompt with learning and reflection
-            prompt = f"""You are an ADAPTIVE web agent that LEARNS and DELIVERS RESULTS.
+                progress_callback(event)
+            except Exception as callback_error:  # pragma: no cover - defensive logging
+                original_print(
+                    f"⚠️ Failed to publish progress update: {callback_error}",
+                    file=sys.stderr,
+                )
+        return event
+
+    def instrumented_print(*args, **kwargs):
+        level = kwargs.pop("level", "info")
+        sep = kwargs.get("sep", " ")
+        message = sep.join(str(arg) for arg in args)
+        _emit(message, level)
+        return original_print(*args, **kwargs)
+
+    builtins.print = instrumented_print
+
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    reflection: Optional[AgentReflection] = None
+    progress_summary = ""
+    collected_data: List[Dict[str, Any]] = []
+    success = False
+    learning_db: Optional[sqlite3.Connection] = None
+
+    try:
+        # Initialize learning database
+        learning_db = init_learning_db()
+        reflection = AgentReflection(learning_db)
+
+        print(f"🧠 ADAPTIVE WEB AGENT - Session: {session_id}")
+        print(f"🎯 TASK: {config.task}\n")
+
+        # Extract task type and domain
+        task = config.task
+        task_type = "search" if "search" in task.lower() or "find" in task.lower() else "navigate"
+
+        with sync_playwright() as p:
+            browser = None
+            context = None
+            page = None
+            try:
+                browser = p.chromium.launch(
+                    headless=config.headless,
+                    args=['--disable-blink-features=AutomationControlled']
+                )
+                context = browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                )
+                page = context.new_page()
+                page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+
+                conversation_history = []
+                collected_data = []
+                last_url = ""
+                current_domain = ""
+                action_sequence = []
+
+                MAX_STEPS = config.max_steps
+
+                for step in range(MAX_STEPS):
+                    print(f"\n{'='*70}\nSTEP {step + 1}/{MAX_STEPS}\n{'='*70}")
+
+                    time.sleep(random.uniform(1.0, 1.8))
+
+                    # Check if URL changed
+                    current_url = page.url
+                    if current_url != last_url:
+                        current_domain = page.evaluate("() => window.location.hostname")
+                        print(f"📍 URL: {current_url[:80]}")
+                        last_url = current_url
+                        reflection.progress_metrics['pages_visited'] += 1
+
+                        # Auto-extract data from new page
+                        extracted = extract_structured_data(page)
+                        if extracted['products']:
+                            print(f"🔍 Auto-extracted {len(extracted['products'])} items from page")
+                            collected_data.extend(extracted['products'])
+                            reflection.progress_metrics['data_extracted'] = len(collected_data)
+
+                    # Check if stuck
+                    is_stuck, stuck_reason = reflection.is_stuck()
+                    if is_stuck:
+                        print(f"⚠️ STUCK DETECTED: {stuck_reason}")
+                        print(f"💡 Suggestion: {reflection.suggest_alternative('navigation')}")
+
+                    # Detect elements
+                    elements = detect_elements_smart(page)
+                    print(f"🔍 Detected {len(elements)} interactive elements")
+
+                    # Get learned strategies
+                    strategies = get_learned_strategies(learning_db, task_type, current_domain)
+                    strategy_text = ""
+                    if strategies:
+                        strategy_text = "\n\n🎓 LEARNED STRATEGIES for this site:\n"
+                        for i, s in enumerate(strategies, 1):
+                            strategy_text += f"{i}. {' → '.join(s['actions'][:3])} (Success: {s['success_rate']*100:.0f}%, Used: {s['times_used']}x)\n"
+
+                    # Draw labels
+                    draw_labels(page, elements)
+                    time.sleep(0.4)
+
+                    # Screenshot
+                    try:
+                        screenshot = page.screenshot()
+                        screenshot_b64 = base64.b64encode(screenshot).decode()
+                    except Exception as screenshot_error:
+                        error_text = str(screenshot_error)
+                        errors.append(error_text)
+                        print(f"✗ Screenshot failed: {error_text}")
+                        break
+
+                    remove_labels(page)
+
+                    # Build focused element list (prioritize visible, important elements)
+                    visible_elements = [e for e in elements if e['visible']][:30]
+                    elem_list = []
+                    for el in visible_elements:
+                        desc = f"[{el['id']}] {el['tag']}"
+                        if el['type']:
+                            desc += f" type={el['type']}"
+                        if el['role']:
+                            desc += f" role={el['role']}"
+                        if el['text']:
+                            desc += f": {el['text'][:60]}"
+                        elem_list.append(desc)
+
+                    # Build results summary
+                    results_summary = ""
+                    if collected_data:
+                        results_summary = f"\n\n📦 COLLECTED DATA ({len(collected_data)} items):\n"
+                        for i, item in enumerate(collected_data[:5], 1):
+                            results_summary += f"{i}. {item.get('name', 'Unknown')[:50]}"
+                            if item.get('price'):
+                                results_summary += f" - ${item['price']}"
+                            if item.get('rating'):
+                                results_summary += f" ⭐{item['rating']}"
+                            if item.get('reviews'):
+                                results_summary += f" ({item['reviews']} reviews)"
+                            results_summary += "\n"
+                        if len(collected_data) > 5:
+                            results_summary += f"... and {len(collected_data) - 5} more items\n"
+
+                    # Enhanced prompt with learning and reflection
+                    prompt = f"""You are an ADAPTIVE web agent that LEARNS and DELIVERS RESULTS.
 
 🎯 TASK: {task}
 
@@ -627,197 +738,307 @@ ACTION: [goto/click/type/extract/analyze/done]
 DETAILS: [specific details]
 REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
-            messages = conversation_history + [{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": screenshot_b64}},
-                    {"type": "text", "text": prompt}
-                ]
-            }]
-            
-            # Get Claude's decision
-            response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=1000,
-                messages=messages
-            )
-            
-            answer = response.content[0].text
-            print(f"\n🤖 AGENT DECISION:\n{answer}\n")
-            
-            conversation_history.append({"role": "assistant", "content": answer})
-            
-            # Parse action
-            action = None
-            details = None
-            for line in answer.split('\n'):
-                upper = line.strip().upper()
-                if upper.startswith('ACTION:'):
-                    action = line.split(':', 1)[1].strip().lower()
-                if upper.startswith('DETAILS:'):
-                    details = line.split(':', 1)[1].strip()
-            
-            if not action:
-                reflection.record_action('parse_error', False)
-                continue
-            
-            action_sequence.append(action)
-            print(f"⚡ EXECUTING: {action.upper()}")
-            if details:
-                print(f"   Details: {details}")
-            
-            # Execute action
-            success = False
-            try:
-                if action == "done":
-                    if not collected_data:
-                        print("❌ REJECTED: Cannot complete without results!")
-                        print("   Continuing to gather data...")
-                        reflection.record_action('done_without_results', False)
+                    messages = conversation_history + [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": screenshot_b64}},
+                            {"type": "text", "text": prompt}
+                        ]
+                    }]
+
+                    # Get Claude's decision
+                    response = client.messages.create(
+                        model=anthropic_model,
+                        max_tokens=1000,
+                        messages=messages
+                    )
+
+                    answer = response.content[0].text
+                    print(f"\n🤖 AGENT DECISION:\n{answer}\n")
+
+                    conversation_history.append({"role": "assistant", "content": answer})
+
+                    # Parse action
+                    action = None
+                    details = None
+                    for line in answer.split('\n'):
+                        upper = line.strip().upper()
+                        if upper.startswith('ACTION:'):
+                            action = line.split(':', 1)[1].strip().lower()
+                        if upper.startswith('DETAILS:'):
+                            details = line.split(':', 1)[1].strip()
+
+                    if not action:
+                        reflection.record_action('parse_error', False)
                         continue
-                    
-                    print("\n" + "="*70)
-                    print("✅ TASK COMPLETED WITH RESULTS")
-                    print("="*70)
-                    
-                    # Save results
-                    save_result(learning_db, session_id, task, collected_data, 0.95)
-                    learn_from_success(learning_db, task_type, current_domain, action_sequence, step + 1)
-                    
-                    # Display final results
-                    print(f"\n📊 FINAL RESULTS ({len(collected_data)} items):")
-                    for i, item in enumerate(collected_data, 1):
-                        print(f"\n{i}. {item.get('name', 'Unknown')}")
-                        if item.get('price'): print(f"   💰 ${item['price']}")
-                        if item.get('rating'): print(f"   ⭐ {item['rating']}/5")
-                        if item.get('reviews'): print(f"   💬 {item['reviews']:,} reviews")
-                        if item.get('url'): print(f"   🔗 {item['url'][:60]}...")
-                    
-                    success = True
-                    reflection.record_action('done', True, collected_data)
-                    break
-                
-                elif action == "extract":
-                    extracted = extract_structured_data(page)
-                    new_items = extracted['products']
-                    
-                    if new_items:
-                        # Avoid duplicates
-                        existing_urls = {item.get('url') for item in collected_data}
-                        new_items = [item for item in new_items if item.get('url') not in existing_urls]
-                        
-                        collected_data.extend(new_items)
-                        print(f"✓ Extracted {len(new_items)} new items (Total: {len(collected_data)})")
-                        reflection.progress_metrics['data_extracted'] = len(collected_data)
-                        success = True
-                    else:
-                        print("⚠️ No data extracted - may need different approach")
-                        learn_from_failure(learning_db, task_type, current_domain, 'extract', 
-                                         'no_data', json.dumps({'url': current_url}))
-                    
-                    reflection.record_action('extract', success, len(new_items) if success else 0)
-                    time.sleep(1)
-                
-                elif action == "analyze":
-                    if not collected_data:
-                        print("❌ No data to analyze yet!")
-                        reflection.record_action('analyze_no_data', False)
-                        continue
-                    
-                    print("\n" + "="*70)
-                    print("📊 DATA ANALYSIS")
-                    print("="*70)
-                    print(f"Total items collected: {len(collected_data)}\n")
-                    
-                    # Sort by relevance
-                    sorted_data = sorted(collected_data, 
-                                       key=lambda x: (x.get('rating', 0), x.get('reviews', 0)), 
-                                       reverse=True)
-                    
-                    print("🏆 TOP MATCHES:")
-                    for i, item in enumerate(sorted_data[:10], 1):
-                        print(f"\n{i}. {item.get('name', 'Unknown')}")
-                        if item.get('price'): print(f"   💰 ${item['price']}")
-                        if item.get('rating'): print(f"   ⭐ {item['rating']}/5")
-                        if item.get('reviews'): print(f"   💬 {item['reviews']:,} reviews")
-                    
-                    success = True
-                    reflection.record_action('analyze', True)
-                    time.sleep(2)
-                
-                elif action == "goto":
-                    page.goto(details, wait_until='domcontentloaded', timeout=30000)
-                    success = True
-                    reflection.record_action('goto', True)
-                    time.sleep(random.uniform(1.5, 2.5))
-                
-                elif action == "type":
-                    inputs = [e for e in elements if e['tag'] == 'input' and e['type'] in ['text', 'search', '']]
-                    if inputs:
-                        el = inputs[0]
-                        page.mouse.click(el['x'], el['y'])
-                        time.sleep(0.3)
-                        page.keyboard.press('Control+A')
-                        page.keyboard.type(details, delay=random.randint(60, 120))
-                        time.sleep(0.3)
-                        page.keyboard.press('Enter')
-                        print(f"✓ Typed: {details}")
-                        success = True
-                        reflection.record_action('type', True)
-                    else:
-                        print("✗ No input field found")
-                        reflection.record_action('type_no_input', False)
-                    time.sleep(random.uniform(2, 3))
-                
-                elif action == "click":
-                    elem_id = int(details.strip())
-                    target = next((e for e in elements if e['id'] == elem_id), None)
-                    
-                    if target:
-                        # Scroll to element if needed
-                        if not target['visible']:
-                            page.evaluate(f"window.scrollTo({{top: {target['top'] - 300}, behavior: 'smooth'}})")
+
+                    action_sequence.append(action)
+                    print(f"⚡ EXECUTING: {action.upper()}")
+                    if details:
+                        print(f"   Details: {details}")
+
+                    # Execute action
+                    success = False
+                    try:
+                        if action == "done":
+                            if not collected_data:
+                                print("❌ REJECTED: Cannot complete without results!")
+                                print("   Continuing to gather data...")
+                                reflection.record_action('done_without_results', False)
+                                continue
+
+                            print("\n" + "="*70)
+                            print("✅ TASK COMPLETED WITH RESULTS")
+                            print("="*70)
+
+                            # Save results
+                            save_result(learning_db, session_id, task, collected_data, 0.95)
+                            learn_from_success(learning_db, task_type, current_domain, action_sequence, step + 1)
+
+                            # Display final results
+                            print(f"\n📊 FINAL RESULTS ({len(collected_data)} items):")
+                            for i, item in enumerate(collected_data, 1):
+                                print(f"\n{i}. {item.get('name', 'Unknown')}")
+                                if item.get('price'):
+                                    print(f"   💰 ${item['price']}")
+                                if item.get('rating'):
+                                    print(f"   ⭐ {item['rating']}/5")
+                                if item.get('reviews'):
+                                    print(f"   💬 {item['reviews']:,} reviews")
+                                if item.get('url'):
+                                    print(f"   🔗 {item['url'][:60]}...")
+
+                            success = True
+                            reflection.record_action('done', True, collected_data)
+                            break
+
+                        elif action == "extract":
+                            extracted = extract_structured_data(page)
+                            new_items = extracted['products']
+
+                            if new_items:
+                                # Avoid duplicates
+                                existing_urls = {item.get('url') for item in collected_data}
+                                new_items = [item for item in new_items if item.get('url') not in existing_urls]
+
+                                collected_data.extend(new_items)
+                                print(f"✓ Extracted {len(new_items)} new items (Total: {len(collected_data)})")
+                                reflection.progress_metrics['data_extracted'] = len(collected_data)
+                                success = True
+                            else:
+                                print("⚠️ No data extracted - may need different approach")
+                                learn_from_failure(learning_db, task_type, current_domain, 'extract',
+                                                 'no_data', json.dumps({'url': current_url}))
+
+                            reflection.record_action('extract', success, len(new_items) if success else 0)
                             time.sleep(1)
-                        
-                        page.mouse.click(target['x'], target['y'])
-                        print(f"✓ Clicked [{elem_id}]: {target['text'][:40]}")
-                        success = True
-                        reflection.record_action('click', True)
-                    else:
-                        print(f"✗ Element {elem_id} not found")
-                        reflection.record_action('click_not_found', False)
-                    
-                    time.sleep(random.uniform(1.5, 2.5))
-                
-            except Exception as e:
-                error_msg = str(e)[:100]
-                print(f"✗ Error: {error_msg}")
-                learn_from_failure(learning_db, task_type, current_domain, action, 
-                                 error_msg, json.dumps({'step': step, 'url': current_url}))
-                reflection.record_action(action, False)
-                time.sleep(1)
-        
-        # End of steps
-        if step == MAX_STEPS - 1:
-            print("\n⚠️ Reached maximum steps")
-            if collected_data:
-                print(f"✓ But successfully collected {len(collected_data)} items")
-                save_result(learning_db, session_id, task, collected_data, 0.8)
-            else:
-                print("❌ No results collected - task incomplete")
-        
-        print(f"\n{reflection.get_progress_summary()}")
-        
-        input("\n\nPress Enter to close browser...")
-        browser.close()
-    
-    learning_db.close()
-    print(f"\n💾 Learning data saved to: agent_learning.db")
-    print(f"📊 Session: {session_id}")
+
+                        elif action == "analyze":
+                            if not collected_data:
+                                print("❌ No data to analyze yet!")
+                                reflection.record_action('analyze_no_data', False)
+                                continue
+
+                            print("\n" + "="*70)
+                            print("📊 DATA ANALYSIS")
+                            print("="*70)
+                            print(f"Total items collected: {len(collected_data)}\n")
+
+                            # Sort by relevance
+                            sorted_data = sorted(collected_data,
+                                               key=lambda x: (x.get('rating', 0), x.get('reviews', 0)),
+                                               reverse=True)
+
+                            print("🏆 TOP MATCHES:")
+                            for i, item in enumerate(sorted_data[:10], 1):
+                                print(f"\n{i}. {item.get('name', 'Unknown')}")
+                                if item.get('price'):
+                                    print(f"   💰 ${item['price']}")
+                                if item.get('rating'):
+                                    print(f"   ⭐ {item['rating']}/5")
+                                if item.get('reviews'):
+                                    print(f"   💬 {item['reviews']:,} reviews")
+
+                            success = True
+                            reflection.record_action('analyze', True)
+                            time.sleep(2)
+
+                        elif action == "goto":
+                            page.goto(details, wait_until='domcontentloaded', timeout=30000)
+                            success = True
+                            reflection.record_action('goto', True)
+                            time.sleep(random.uniform(1.5, 2.5))
+
+                        elif action == "type":
+                            inputs = [e for e in elements if e['tag'] == 'input' and e['type'] in ['text', 'search', '']]
+                            if inputs:
+                                el = inputs[0]
+                                page.mouse.click(el['x'], el['y'])
+                                time.sleep(0.3)
+                                page.keyboard.press('Control+A')
+                                page.keyboard.type(details, delay=random.randint(60, 120))
+                                time.sleep(0.3)
+                                page.keyboard.press('Enter')
+                                print(f"✓ Typed: {details}")
+                                success = True
+                                reflection.record_action('type', True)
+                            else:
+                                print("✗ No input field found")
+                                reflection.record_action('type_no_input', False)
+                            time.sleep(random.uniform(2, 3))
+
+                        elif action == "click":
+                            elem_id = int(details.strip())
+                            target = next((e for e in elements if e['id'] == elem_id), None)
+
+                            if target:
+                                # Scroll to element if needed
+                                if not target['visible']:
+                                    page.evaluate(f"window.scrollTo({{top: {target['top'] - 300}, behavior: 'smooth'}})")
+                                    time.sleep(1)
+
+                                page.mouse.click(target['x'], target['y'])
+                                print(f"✓ Clicked [{elem_id}]: {target['text'][:40]}")
+                                success = True
+                                reflection.record_action('click', True)
+                            else:
+                                print(f"✗ Element {elem_id} not found")
+                                reflection.record_action('click_not_found', False)
+
+                            time.sleep(random.uniform(1.5, 2.5))
+
+                    except Exception as e:
+                        error_msg = str(e)[:100]
+                        print(f"✗ Error: {error_msg}")
+                        errors.append(error_msg)
+                        learn_from_failure(learning_db, task_type, current_domain, action,
+                                         error_msg, json.dumps({'step': step, 'url': current_url}))
+                        reflection.record_action(action, False)
+                        time.sleep(1)
+
+                    # End of steps
+                    if step == MAX_STEPS - 1:
+                        print("\n⚠️ Reached maximum steps")
+                        if collected_data:
+                            print(f"✓ But successfully collected {len(collected_data)} items")
+                            save_result(learning_db, session_id, task, collected_data, 0.8)
+                        else:
+                            print("❌ No results collected - task incomplete")
+
+                    print(f"\n{reflection.get_progress_summary()}")
+
+            finally:
+                if page is not None:
+                    try:
+                        remove_labels(page)
+                    except Exception:
+                        pass
+                if context:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+                if browser:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+
+        print(f"\n💾 Learning data saved to: agent_learning.db")
+        print(f"📊 Session: {session_id}")
+
+    except Exception as exc:  # pragma: no cover - defensive
+        error_message = str(exc)
+        errors.append(error_message)
+        _emit(f"Unhandled agent error: {error_message}", level="error")
+    finally:
+        builtins.print = original_print
+        if reflection:
+            try:
+                progress_summary = reflection.get_progress_summary()
+            except Exception:
+                progress_summary = ""
+        if learning_db:
+            try:
+                learning_db.close()
+            except Exception:
+                pass
+
+    if not progress_summary and reflection:
+        try:
+            progress_summary = reflection.get_progress_summary()
+        except Exception:
+            progress_summary = ""
+
+    if success and collected_data:
+        message = f"Collected {len(collected_data)} items."
+    elif success:
+        message = "Agent finished successfully without data collection."
+    else:
+        message = errors[-1] if errors else "Agent execution completed without success."
+
+    status = "completed" if success else "failed"
+
+    result = AgentResult(
+        success=success,
+        status=status,
+        message=message,
+        mode=config.model,
+        session_id=session_id,
+        data=collected_data,
+        progress_summary=progress_summary,
+        logs=progress_events,
+        errors=errors,
+        metadata={
+            "task": config.task,
+            "tools": config.tools,
+            "max_steps": config.max_steps,
+            "headless": config.headless,
+        },
+    )
+
+    _emit(message, level="info" if success else "warning")
+    return result
+
+def adaptive_agent(task: str) -> AgentResult:
+    """Backward-compatible wrapper returning an AgentResult."""
+
+    return run_adaptive_agent(task)
+
 
 if __name__ == "__main__":
-    task = input("What should I do? ")
-    if not task:
-        task = "go to walmart.com and find me queen bed frames under $250 with at least 1500 reviews and 4+ stars"
-    
-    adaptive_agent(task)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the adaptive web agent")
+    parser.add_argument("task", help="Task description for the agent")
+    parser.add_argument("--model", default="claude", help="Model identifier to use")
+    parser.add_argument(
+        "--tool",
+        dest="tools",
+        action="append",
+        default=[],
+        help="Tool identifier to enable (can be specified multiple times)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run the browser in headless mode",
+    )
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=40,
+        help="Maximum number of agent steps",
+    )
+
+    args = parser.parse_args()
+    agent_result = run_adaptive_agent(
+        AgentConfig(
+            task=args.task,
+            model=args.model,
+            tools=args.tools,
+            headless=args.headless,
+            max_steps=args.max_steps,
+        )
+    )
+    print(json.dumps(agent_result.to_dict(), indent=2))
