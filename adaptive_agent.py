@@ -269,8 +269,8 @@ def detect_elements_smart(page):
 
 def extract_structured_data(page, data_type: str = 'auto'):
     """Extract structured data from any page intelligently"""
-    
-    data = page.evaluate("""
+
+    data = page.evaluate(r"""
         (dataType) => {
             const extracted = {
                 products: [],
