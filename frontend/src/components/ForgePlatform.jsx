@@ -24,6 +24,10 @@ export default function ForgePlatform() {
   const [showBrowserView, setShowBrowserView] = useState(true)
   const [currentUrl, setCurrentUrl] = useState('')
   const [manualControl, setManualControl] = useState(false)
+  const [activeView, setActiveView] = useState('browser') // browser, terminal, code, analytics
+  const [terminalOutput, setTerminalOutput] = useState([])
+  const [codeOutput, setCodeOutput] = useState([])
+  const [analyticsData, setAnalyticsData] = useState(null)
   const textareaRef = useRef(null)
 
   const chatFolders = {
@@ -183,6 +187,34 @@ export default function ForgePlatform() {
                   idx === 2 ? { ...step, status: 'in-progress', timestamp: new Date() } :
                   idx < 2 ? { ...step, status: 'completed', timestamp: new Date() } : step
                 ))
+              }
+
+              // Handle terminal output
+              if (event.payload?.type === 'terminal') {
+                setTerminalOutput(prev => [...prev, {
+                  command: event.payload.command,
+                  output: event.payload.output,
+                  error: event.payload.error,
+                  timestamp: new Date()
+                }])
+                setActiveView('terminal')
+              }
+
+              // Handle code execution
+              if (event.payload?.type === 'code') {
+                setCodeOutput(prev => [...prev, {
+                  code: event.payload.code,
+                  output: event.payload.output,
+                  error: event.payload.error,
+                  timestamp: new Date()
+                }])
+                setActiveView('code')
+              }
+
+              // Handle analytics
+              if (event.payload?.type === 'analytics') {
+                setAnalyticsData(event.payload.analysis)
+                setActiveView('analytics')
               }
 
               console.log('📡 Event:', event.message)
@@ -1293,8 +1325,8 @@ export default function ForgePlatform() {
           position: 'relative',
           overflow: 'hidden'
         }}>
-          {/* Browser View - Show screenshot when available */}
-          {currentScreenshot && showBrowserView && (
+          {/* Browser View - Always show, update with screenshots */}
+          {showBrowserView && (
             <div style={{
               position: 'absolute',
               inset: 0,
@@ -1302,89 +1334,286 @@ export default function ForgePlatform() {
               flexDirection: 'column',
               background: '#0a0a0a'
             }}>
-              {/* Browser URL Bar */}
+              {/* View Switcher Tabs */}
               <div style={{
                 padding: '12px 20px',
                 background: '#0d0d0d',
                 borderBottom: '1px solid #1a1a1a',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '12px'
+                gap: '8px'
               }}>
-                <Globe size={14} color="#666666" />
-                <div style={{
-                  flex: 1,
-                  padding: '8px 14px',
-                  background: '#000000',
-                  border: '1px solid #222222',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#888888',
-                  fontFamily: 'monospace',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}>
-                  {currentUrl || 'Loading...'}
-                </div>
-                <button
-                  onClick={handleTakeControl}
-                  style={{
-                    padding: '6px 12px',
-                    background: manualControl ? 'rgba(147, 51, 234, 0.2)' : 'transparent',
-                    border: `1px solid ${manualControl ? '#9333ea' : '#222222'}`,
-                    borderRadius: '4px',
-                    color: manualControl ? '#a855f7' : '#888888',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '11px',
-                    fontWeight: '500',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <Hammer size={14} />
-                  {manualControl ? 'Release' : 'Take Control'}
-                </button>
-                <button
-                  onClick={() => setShowBrowserView(false)}
-                  style={{
-                    padding: '6px',
-                    background: 'transparent',
-                    border: '1px solid #222222',
-                    borderRadius: '4px',
-                    color: '#888888',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Eye size={14} />
-                </button>
+                {[
+                  { id: 'browser', icon: Globe, label: 'Browser' },
+                  { id: 'terminal', icon: Code, label: 'Terminal' },
+                  { id: 'code', icon: Code, label: 'Code' },
+                  { id: 'analytics', icon: Database, label: 'Analytics' }
+                ].map(view => (
+                  <button
+                    key={view.id}
+                    onClick={() => setActiveView(view.id)}
+                    style={{
+                      padding: '6px 12px',
+                      background: activeView === view.id ? 'rgba(255, 138, 0, 0.15)' : 'transparent',
+                      border: `1px solid ${activeView === view.id ? 'rgba(255, 138, 0, 0.3)' : '#222222'}`,
+                      borderRadius: '4px',
+                      color: activeView === view.id ? '#ff8a00' : '#888888',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '11px',
+                      fontWeight: '500',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    <view.icon size={14} />
+                    {view.label}
+                  </button>
+                ))}
+                <div style={{ flex: 1 }} />
+                {activeView === 'browser' && (
+                  <>
+                    <div style={{
+                      flex: 1,
+                      padding: '8px 14px',
+                      background: '#000000',
+                      border: '1px solid #222222',
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      color: '#888888',
+                      fontFamily: 'monospace',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {currentUrl || 'Loading...'}
+                    </div>
+                    <button
+                      onClick={handleTakeControl}
+                      style={{
+                        padding: '6px 12px',
+                        background: manualControl ? 'rgba(147, 51, 234, 0.2)' : 'transparent',
+                        border: `1px solid ${manualControl ? '#9333ea' : '#222222'}`,
+                        borderRadius: '4px',
+                        color: manualControl ? '#a855f7' : '#888888',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <Hammer size={14} />
+                      {manualControl ? 'Release' : 'Take Control'}
+                    </button>
+                  </>
+                )}
               </div>
 
-              {/* Screenshot Display */}
+              {/* View Content */}
               <div style={{
                 flex: 1,
                 overflow: 'auto',
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'center',
-                padding: '20px',
                 background: '#000000'
               }}>
-                <img
-                  src={`data:image/png;base64,${currentScreenshot}`}
-                  alt="Browser view"
-                  style={{
-                    maxWidth: '100%',
-                    height: 'auto',
-                    borderRadius: '8px',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                    border: '1px solid #1a1a1a'
-                  }}
-                />
+                {/* Browser View */}
+                {activeView === 'browser' && (
+                  <div style={{
+                    height: '100%',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'center',
+                    padding: '20px'
+                  }}>
+                    {currentScreenshot ? (
+                      <img
+                        src={`data:image/png;base64,${currentScreenshot}`}
+                        alt="Browser view"
+                        style={{
+                          maxWidth: '100%',
+                          height: 'auto',
+                          borderRadius: '8px',
+                          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+                          border: '1px solid #1a1a1a'
+                        }}
+                      />
+                    ) : (
+                      <div style={{
+                        textAlign: 'center',
+                        color: '#666666',
+                        padding: '40px'
+                      }}>
+                        <Globe size={48} color="#333333" style={{ marginBottom: '16px' }} />
+                        <div style={{ fontSize: '14px' }}>Waiting for browser to load...</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Terminal View */}
+                {activeView === 'terminal' && (
+                  <div style={{
+                    height: '100%',
+                    padding: '20px',
+                    fontFamily: 'monospace',
+                    fontSize: '13px',
+                    color: '#00ff00',
+                    background: '#000000',
+                    overflowY: 'auto'
+                  }}>
+                    <div style={{ marginBottom: '16px', color: '#888888' }}>
+                      🖥️ Terminal Output
+                    </div>
+                    {terminalOutput.length === 0 ? (
+                      <div style={{ color: '#666666' }}>No terminal commands executed yet...</div>
+                    ) : (
+                      terminalOutput.map((entry, idx) => (
+                        <div key={idx} style={{ marginBottom: '20px', borderBottom: '1px solid #1a1a1a', paddingBottom: '12px' }}>
+                          <div style={{ color: '#ff8a00', marginBottom: '8px' }}>
+                            $ {entry.command}
+                          </div>
+                          {entry.output && (
+                            <pre style={{ color: '#00ff00', margin: 0, whiteSpace: 'pre-wrap' }}>
+                              {entry.output}
+                            </pre>
+                          )}
+                          {entry.error && (
+                            <pre style={{ color: '#ef4444', margin: 0, whiteSpace: 'pre-wrap' }}>
+                              {entry.error}
+                            </pre>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Code View */}
+                {activeView === 'code' && (
+                  <div style={{
+                    height: '100%',
+                    padding: '20px',
+                    fontFamily: 'monospace',
+                    fontSize: '13px',
+                    overflowY: 'auto'
+                  }}>
+                    <div style={{ marginBottom: '16px', color: '#888888' }}>
+                      💻 Code Execution
+                    </div>
+                    {codeOutput.length === 0 ? (
+                      <div style={{ color: '#666666' }}>No code executed yet...</div>
+                    ) : (
+                      codeOutput.map((entry, idx) => (
+                        <div key={idx} style={{ marginBottom: '24px', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '8px', overflow: 'hidden' }}>
+                          <div style={{ padding: '12px', background: '#0d0d0d', borderBottom: '1px solid #1a1a1a', color: '#ff8a00', fontWeight: '600' }}>
+                            Code #{idx + 1}
+                          </div>
+                          <pre style={{ padding: '16px', color: '#cccccc', margin: 0, overflow: 'auto' }}>
+                            {entry.code}
+                          </pre>
+                          {entry.output && (
+                            <>
+                              <div style={{ padding: '8px 12px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a', color: '#888888', fontSize: '11px' }}>
+                                Output:
+                              </div>
+                              <pre style={{ padding: '16px', color: '#00ff00', margin: 0 }}>
+                                {entry.output}
+                              </pre>
+                            </>
+                          )}
+                          {entry.error && (
+                            <>
+                              <div style={{ padding: '8px 12px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a', color: '#ef4444', fontSize: '11px' }}>
+                                Error:
+                              </div>
+                              <pre style={{ padding: '16px', color: '#ef4444', margin: 0 }}>
+                                {entry.error}
+                              </pre>
+                            </>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Analytics View */}
+                {activeView === 'analytics' && (
+                  <div style={{
+                    height: '100%',
+                    padding: '20px',
+                    overflowY: 'auto'
+                  }}>
+                    <div style={{ marginBottom: '16px', color: '#888888' }}>
+                      📊 Analytics Dashboard
+                    </div>
+                    {!analyticsData ? (
+                      <div style={{ color: '#666666' }}>No analytics data yet...</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                        {/* Summary Card */}
+                        <div style={{ background: '#0a0a0a', border: '1px solid rgba(255, 138, 0, 0.2)', borderRadius: '8px', padding: '20px' }}>
+                          <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '12px', fontSize: '14px' }}>
+                            📈 Summary
+                          </div>
+                          <div style={{ color: '#cccccc', fontSize: '13px' }}>
+                            <div>Total Items Analyzed: <strong>{analyticsData.data_count}</strong></div>
+                          </div>
+                        </div>
+
+                        {/* Price Statistics */}
+                        {analyticsData.statistics?.prices && (
+                          <div style={{ background: '#0a0a0a', border: '1px solid rgba(255, 138, 0, 0.2)', borderRadius: '8px', padding: '20px' }}>
+                            <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '12px', fontSize: '14px' }}>
+                              💰 Price Analysis
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', color: '#cccccc', fontSize: '13px' }}>
+                              <div>Min: <strong>${analyticsData.statistics.prices.min.toFixed(2)}</strong></div>
+                              <div>Max: <strong>${analyticsData.statistics.prices.max.toFixed(2)}</strong></div>
+                              <div>Mean: <strong>${analyticsData.statistics.prices.mean.toFixed(2)}</strong></div>
+                              <div>Median: <strong>${analyticsData.statistics.prices.median.toFixed(2)}</strong></div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Insights */}
+                        {analyticsData.insights?.length > 0 && (
+                          <div style={{ background: '#0a0a0a', border: '1px solid rgba(255, 138, 0, 0.2)', borderRadius: '8px', padding: '20px' }}>
+                            <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '12px', fontSize: '14px' }}>
+                              💡 Key Insights
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {analyticsData.insights.map((insight, idx) => (
+                                <div key={idx} style={{ color: '#cccccc', fontSize: '13px', paddingLeft: '12px', borderLeft: '2px solid rgba(255, 138, 0, 0.3)' }}>
+                                  {insight}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Recommendations */}
+                        {analyticsData.recommendations?.length > 0 && (
+                          <div style={{ background: '#0a0a0a', border: '1px solid rgba(34, 197, 94, 0.2)', borderRadius: '8px', padding: '20px' }}>
+                            <div style={{ color: '#22c55e', fontWeight: '600', marginBottom: '12px', fontSize: '14px' }}>
+                              🎯 Recommendations
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {analyticsData.recommendations.map((rec, idx) => (
+                                <div key={idx} style={{ color: '#cccccc', fontSize: '13px', paddingLeft: '12px', borderLeft: '2px solid rgba(34, 197, 94, 0.3)' }}>
+                                  {rec}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Live Indicator */}
@@ -1558,127 +1787,6 @@ export default function ForgePlatform() {
                   </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Animated glow */}
-          {!currentScreenshot && (
-            <div style={{
-              position: 'absolute',
-              inset: 0,
-              background: error
-                ? 'radial-gradient(circle at center, rgba(239, 68, 68, 0.05) 0%, transparent 70%)'
-                : taskResult
-                ? 'radial-gradient(circle at center, rgba(34, 197, 94, 0.05) 0%, transparent 70%)'
-                : 'radial-gradient(circle at center, rgba(255, 138, 0, 0.05) 0%, transparent 70%)',
-              animation: error || taskResult ? 'none' : 'glow 3s ease-in-out infinite'
-            }} />
-          )}
-
-          {!currentScreenshot && (
-            <div style={{
-              textAlign: 'center',
-              position: 'relative',
-              zIndex: 1
-            }}>
-              {!error && !taskResult && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  border: '3px solid #1a1a1a',
-                  borderTopColor: '#ff8a00',
-                  borderRadius: '50%',
-                  animation: 'spin 1.5s linear infinite',
-                  boxShadow: '0 0 20px rgba(255, 138, 0, 0.3)'
-                }} />
-                <div style={{
-                  fontSize: '16px',
-                  color: '#ffffff',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  {currentStep ? currentStep.action : 'Processing...'}
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888'
-                }}>
-                  Step {executionSteps.filter(s => s.status === 'completed').length + 1} of {executionSteps.length}
-                </div>
-              </>
-            )}
-
-            {error && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '3px solid rgba(239, 68, 68, 0.3)',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '24px'
-                }}>
-                  ✗
-                </div>
-                <div style={{
-                  fontSize: '16px',
-                  color: '#ef4444',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  Task Failed
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888',
-                  maxWidth: '400px'
-                }}>
-                  {error}
-                </div>
-              </>
-            )}
-
-            {taskResult && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  background: 'rgba(34, 197, 94, 0.1)',
-                  border: '3px solid rgba(34, 197, 94, 0.3)',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '24px',
-                  color: '#22c55e'
-                }}>
-                  ✓
-                </div>
-                <div style={{
-                  fontSize: '16px',
-                  color: '#22c55e',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  Task Completed
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888'
-                }}>
-                  {taskResult.message}
-                  <br />
-                  Session: {taskResult.session_id}
-                </div>
-              </>
-            )}
             </div>
           )}
         </div>

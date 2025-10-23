@@ -12,6 +12,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Optional, Union
 import builtins
 
+# Import new capabilities
+from computational_env import get_computational_environment, CodeEditor
+from analytics_engine import get_analytics_engine
+
 client = anthropic.Anthropic()
 
 
@@ -224,10 +228,10 @@ def get_site_patterns(conn, domain: str) -> List[Dict]:
     """Retrieve site-specific element patterns"""
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT element_type, selector_patterns, success_count
+        SELECT pattern_type, selector, reliability
         FROM site_patterns
-        WHERE website_domain = ?
-        ORDER BY success_count DESC
+        WHERE domain = ?
+        ORDER BY reliability DESC
         LIMIT 5
     ''', (domain,))
 
@@ -236,7 +240,7 @@ def get_site_patterns(conn, domain: str) -> List[Dict]:
         patterns.append({
             'element_type': row[0],
             'selector_patterns': row[1],
-            'success_count': row[2]
+            'success_count': int(row[2] * 100) if row[2] else 0
         })
 
     return patterns
@@ -857,10 +861,16 @@ AVAILABLE ACTIONS:
 ⚡ WORKFLOW: navigate → extract data → analyze ONCE → done
 ⚡ NEVER call "analyze" multiple times - it's a waste! Once you have recommendations, call "done"!
 
+🔧 NEW CAPABILITIES - Multi-Tool Agent:
+- TERMINAL: Execute shell commands for system tasks, file operations, package installs
+- CODE: Run Python code for data processing, analysis, automation
+- ANALYZE_DATA: Deep analytics on collected data (statistics, insights, visualizations)
+- Use these tools when the task requires computation, analysis, or system operations
+
 What's your next intelligent action?
 
-ACTION: [goto/click/type/extract/analyze/done]
-DETAILS: [specific details]
+ACTION: [goto/click/type/extract/analyze/terminal/code/analyze_data/done]
+DETAILS: [specific details - for terminal: command, for code: python code, for analyze_data: json data]
 REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
                     messages = conversation_history + [{
@@ -1181,6 +1191,103 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                                 reflection.record_action('click_not_found', False)
 
                             time.sleep(random.uniform(1.5, 2.5))
+
+                        elif action == "terminal":
+                            # Execute terminal command
+                            print(f"⚡ Executing terminal command: {details}")
+                            comp_env = get_computational_environment()
+                            result = comp_env.execute_terminal_command(details, timeout=30)
+
+                            if result.success:
+                                print(f"✓ Terminal output:\n{result.output}")
+                                success = True
+                                reflection.record_action('terminal', True)
+
+                                # Send output to frontend
+                                _emit(
+                                    f"Terminal: {details}",
+                                    level="info",
+                                    payload={
+                                        "type": "terminal",
+                                        "command": details,
+                                        "output": result.output,
+                                        "error": result.error,
+                                        "exit_code": result.exit_code
+                                    }
+                                )
+                            else:
+                                print(f"✗ Terminal error: {result.error}")
+                                reflection.record_action('terminal', False)
+
+                            time.sleep(1)
+
+                        elif action == "code":
+                            # Execute Python code
+                            print(f"⚡ Executing Python code...")
+                            comp_env = get_computational_environment()
+                            result = comp_env.execute_python_code(details, timeout=30)
+
+                            if result.success:
+                                print(f"✓ Code output:\n{result.output}")
+                                success = True
+                                reflection.record_action('code', True)
+
+                                # Send output to frontend
+                                _emit(
+                                    f"Code executed successfully",
+                                    level="info",
+                                    payload={
+                                        "type": "code",
+                                        "code": details,
+                                        "output": result.output,
+                                        "error": result.error
+                                    }
+                                )
+                            else:
+                                print(f"✗ Code error: {result.error}")
+                                reflection.record_action('code', False)
+
+                            time.sleep(1)
+
+                        elif action == "analyze_data":
+                            # Deep analytics on collected data
+                            print(f"⚡ Performing deep analytics on {len(collected_data)} items...")
+                            analytics = get_analytics_engine()
+                            analysis = analytics.analyze_extracted_data(collected_data)
+
+                            print(f"✓ Analytics complete!")
+                            print(f"\n📊 Analysis Results:")
+                            print(f"   Total Items: {analysis['data_count']}")
+
+                            if 'prices' in analysis.get('statistics', {}):
+                                stats = analysis['statistics']['prices']
+                                print(f"   Price Range: ${stats['min']:.2f} - ${stats['max']:.2f}")
+                                print(f"   Average: ${stats['mean']:.2f}")
+
+                            if analysis.get('insights'):
+                                print(f"\n💡 Key Insights:")
+                                for insight in analysis['insights'][:3]:
+                                    print(f"   • {insight}")
+
+                            if analysis.get('recommendations'):
+                                print(f"\n🎯 Recommendations:")
+                                for rec in analysis['recommendations']:
+                                    print(f"   • {rec}")
+
+                            success = True
+                            reflection.record_action('analyze_data', True)
+
+                            # Send analytics to frontend
+                            _emit(
+                                f"Analytics: {len(collected_data)} items analyzed",
+                                level="info",
+                                payload={
+                                    "type": "analytics",
+                                    "analysis": analysis
+                                }
+                            )
+
+                            time.sleep(2)
 
                     except Exception as e:
                         error_msg = str(e)[:100]
