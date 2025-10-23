@@ -190,6 +190,27 @@ async def navigate(request: NavigateRequest):
     }
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint to verify backend is running."""
+    return {
+        "status": "healthy",
+        "version": "1.0.0",
+        "endpoints": {
+            "execute": "/execute",
+            "execute_stream": "/execute/stream",
+            "navigate": "/navigate",
+            "health": "/health",
+            "docs": "/docs"
+        },
+        "features": {
+            "screenshot_streaming": True,
+            "manual_control": True,
+            "integrated_frontend": STATIC_DIR.exists()
+        }
+    }
+
+
 @app.get("/")
 async def serve_frontend():
     """Serve the frontend index.html (Spring Boot style single app)."""

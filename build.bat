@@ -31,5 +31,3 @@ echo Build complete!
 echo.
 echo Frontend built and copied to backend\static\
 echo Run 'start.bat' or 'uvicorn backend.server:app --host 0.0.0.0 --port 8000' to start the integrated app
-
-cd ..

@@ -2,6 +2,18 @@
 
 This project combines a React-based interface with a Python adaptive web agent. The backend exposes the agent through a FastAPI service so the UI can trigger automated browsing workflows and display streaming progress.
 
+## 📚 Documentation
+
+- **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** - Quick start guide, troubleshooting, and common issues
+- **[VALIDATION_CHECKLIST.md](./VALIDATION_CHECKLIST.md)** - Comprehensive system validation and test matrix
+- **[README.md](./README.md)** - This file (architecture and setup)
+
+**First time user?** → Start with **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)**
+
+**Having issues?** → Check **[STARTUP_GUIDE.md](./STARTUP_GUIDE.md)** troubleshooting section
+
+---
+
 ## Prerequisites
 
 - Python 3.10+
