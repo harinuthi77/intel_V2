@@ -10,7 +10,7 @@ from queue import Queue
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +25,17 @@ logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="Adaptive Agent Backend", version="1.0.0")
+
+
+# Request logging middleware - LOG EVERY REQUEST
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every incoming HTTP request for debugging."""
+    logger.info(f"🔵 REQUEST: {request.method} {request.url.path} from {request.client.host}")
+    response = await call_next(request)
+    logger.info(f"✅ RESPONSE: {request.method} {request.url.path} → Status {response.status_code}")
+    return response
+
 
 # Allow local development with the React UI
 app.add_middleware(
