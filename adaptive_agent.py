@@ -616,6 +616,108 @@ def remove_labels(page):
     except:
         pass
 
+# ============ LOOP DETECTION ============
+class LoopDetector:
+    """Detects and breaks infinite loops by tracking visual state and actions."""
+
+    def __init__(self):
+        self.screenshot_hashes = []  # Track last N screenshot hashes
+        self.last_action = None  # Track what action was just taken
+        self.loop_break_attempts = 0  # Track how many times we've tried to break loops
+        self.max_history = 5  # Keep last 5 screenshots
+        self.loop_threshold = 3  # Trigger if same screenshot appears 3 times
+
+    def _hash_screenshot(self, screenshot_bytes: bytes) -> str:
+        """Create hash of screenshot for comparison."""
+        import hashlib
+        return hashlib.md5(screenshot_bytes).hexdigest()[:16]
+
+    def detect_visual_loop(self, screenshot_bytes: bytes) -> bool:
+        """
+        Detect if we're in a visual loop (same screenshot repeating).
+
+        Returns:
+            True if loop detected, False otherwise
+        """
+        # Hash current screenshot
+        current_hash = self._hash_screenshot(screenshot_bytes)
+
+        # Add to history
+        self.screenshot_hashes.append(current_hash)
+
+        # Keep only last N screenshots
+        if len(self.screenshot_hashes) > self.max_history:
+            self.screenshot_hashes.pop(0)
+
+        # Need at least 3 screenshots to detect loop
+        if len(self.screenshot_hashes) < 3:
+            return False
+
+        # Count how many times current hash appears in recent history
+        count = self.screenshot_hashes.count(current_hash)
+
+        if count >= self.loop_threshold:
+            print(f"\n{'='*70}")
+            print(f"🔄 VISUAL LOOP DETECTED: Same screenshot appeared {count} times")
+            print(f"   Screenshot hash: {current_hash}")
+            print(f"   Recent hashes: {self.screenshot_hashes}")
+            print(f"   Last action: {self.last_action}")
+            print(f"{'='*70}\n")
+            return True
+
+        return False
+
+    def get_alternative_action(self) -> str:
+        """
+        Suggest an alternative action to break the loop.
+
+        Returns:
+            String suggesting alternative action
+        """
+        self.loop_break_attempts += 1
+
+        # Track what we've tried
+        alternatives = []
+
+        # If we were scrolling, try clicking instead
+        if self.last_action and 'scroll' in self.last_action.lower():
+            alternatives.append("click_random")
+            alternatives.append("go_back")
+
+        # If we were clicking, try scrolling or going back
+        elif self.last_action and 'click' in self.last_action.lower():
+            alternatives.append("scroll_down")
+            alternatives.append("go_back")
+
+        # If we were typing, try clicking or scrolling
+        elif self.last_action and 'type' in self.last_action.lower():
+            alternatives.append("click_random")
+            alternatives.append("scroll_down")
+
+        # Default alternatives
+        if not alternatives:
+            alternatives = ["click_random", "scroll_down", "go_back"]
+
+        # Rotate through alternatives based on attempt count
+        chosen = alternatives[self.loop_break_attempts % len(alternatives)]
+
+        print(f"💡 BREAKING LOOP - Attempt #{self.loop_break_attempts}")
+        print(f"   → Was trying: {self.last_action}")
+        print(f"   → Will try: {chosen}")
+
+        return chosen
+
+    def record_action(self, action: str):
+        """Record the last action taken."""
+        self.last_action = action
+
+    def reset(self):
+        """Reset loop detector state."""
+        self.screenshot_hashes = []
+        self.last_action = None
+        self.loop_break_attempts = 0
+
+
 # ============ MAIN ADAPTIVE AGENT ============
 def run_adaptive_agent(
     config: Union[AgentConfig, Dict[str, Any], str],
@@ -677,6 +779,10 @@ def run_adaptive_agent(
         # Initialize learning database
         learning_db = init_learning_db()
         reflection = AgentReflection(learning_db)
+
+        # Initialize loop detector
+        loop_detector = LoopDetector()
+        print("🔄 Loop detection enabled")
 
         print(f"🧠 ADAPTIVE WEB AGENT - Session: {session_id}")
         print(f"🎯 TASK: {config.task}\n")
@@ -812,6 +918,51 @@ def run_adaptive_agent(
 
                     print("🗑️  Removing labels...")
                     remove_labels(page)
+
+                    # ============ LOOP DETECTION ============
+                    # Check if we're stuck in a visual loop
+                    if loop_detector.detect_visual_loop(screenshot):
+                        alternative = loop_detector.get_alternative_action()
+
+                        # Execute alternative action to break the loop
+                        if alternative == "click_random":
+                            print("   → Trying: Click random element")
+                            # Click a random visible element
+                            if len(elements) > 0:
+                                random_elem = random.choice(elements[:10])  # Pick from top 10
+                                try:
+                                    page.locator(f'[data-ai-id="{random_elem["id"]}"]').click(timeout=3000)
+                                    print(f"   ✅ Clicked element {random_elem['id']}")
+                                    loop_detector.record_action(f"click {random_elem['id']}")
+                                    reflection.record_action(f"click_{random_elem['id']}", "loop_break")
+                                except Exception as click_err:
+                                    print(f"   ⚠️  Click failed: {click_err}")
+
+                        elif alternative == "scroll_down":
+                            print("   → Trying: Scroll down")
+                            try:
+                                page.evaluate("window.scrollBy(0, 500)")
+                                time.sleep(0.5)
+                                print("   ✅ Scrolled down")
+                                loop_detector.record_action("scroll down")
+                                reflection.record_action("scroll", "loop_break")
+                            except Exception as scroll_err:
+                                print(f"   ⚠️  Scroll failed: {scroll_err}")
+
+                        elif alternative == "go_back":
+                            print("   → Trying: Go back")
+                            try:
+                                page.go_back(timeout=5000)
+                                time.sleep(1.0)
+                                print("   ✅ Went back")
+                                loop_detector.record_action("go back")
+                                reflection.record_action("back", "loop_break")
+                            except Exception as back_err:
+                                print(f"   ⚠️  Go back failed: {back_err}")
+
+                        # Continue to next iteration after breaking loop
+                        print("   ✅ Loop break attempt complete, continuing...\n")
+                        continue
 
                     # Build focused element list (prioritize visible, important elements)
                     visible_elements = [e for e in elements if e['visible']][:30]
@@ -1186,6 +1337,7 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                             page.goto(details, wait_until='domcontentloaded', timeout=30000)
                             success = True
                             reflection.record_action('goto', True)
+                            loop_detector.record_action(f"goto {details}")
                             time.sleep(random.uniform(1.5, 2.5))
 
                         elif action == "type":
@@ -1201,6 +1353,7 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                                 print(f"✓ Typed: {details}")
                                 success = True
                                 reflection.record_action('type', True)
+                                loop_detector.record_action(f"type {details}")
                             else:
                                 print("✗ No input field found")
                                 reflection.record_action('type_no_input', False)
@@ -1220,6 +1373,7 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                                 print(f"✓ Clicked [{elem_id}]: {target['text'][:40]}")
                                 success = True
                                 reflection.record_action('click', True)
+                                loop_detector.record_action(f"click {elem_id}")
                             else:
                                 print(f"✗ Element {elem_id} not found")
                                 reflection.record_action('click_not_found', False)
