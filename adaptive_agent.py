@@ -7,6 +7,8 @@ import random
 import json
 import sqlite3
 import os
+import signal
+import platform
 from datetime import datetime
 import sys
 from dataclasses import dataclass, field
@@ -616,6 +618,127 @@ def remove_labels(page):
     except:
         pass
 
+# ============ GRACEFUL SHUTDOWN ============
+class GracefulShutdown:
+    """Handles graceful shutdown on Ctrl+C and cleanup."""
+
+    def __init__(self):
+        self.shutdown_requested = False
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.playwright = None
+        self._original_sigint = None
+        self._original_sigbreak = None
+
+        # Register signal handlers
+        self._register_handlers()
+
+    def _register_handlers(self):
+        """Register signal handlers for graceful shutdown."""
+        # Handle Ctrl+C (SIGINT)
+        self._original_sigint = signal.signal(signal.SIGINT, self._handle_shutdown)
+
+        # Handle Ctrl+Break on Windows (SIGBREAK)
+        if platform.system() == "Windows":
+            try:
+                self._original_sigbreak = signal.signal(signal.SIGBREAK, self._handle_shutdown)
+            except AttributeError:
+                # SIGBREAK not available on this platform
+                pass
+
+        print("🛡️  Graceful shutdown handlers registered (Ctrl+C to stop)")
+
+    def _handle_shutdown(self, signum, frame):
+        """Handle shutdown signal."""
+        if self.shutdown_requested:
+            # Second Ctrl+C - force quit
+            print("\n" + "=" * 70)
+            print("⚠️  FORCE QUIT - Second Ctrl+C received")
+            print("=" * 70)
+            sys.exit(1)
+
+        print("\n" + "=" * 70)
+        print("🛑 SHUTDOWN SIGNAL RECEIVED")
+        print("=" * 70)
+        print("⏳ Finishing current step gracefully...")
+        print("   (Press Ctrl+C again to force quit)")
+        print("=" * 70)
+
+        self.shutdown_requested = True
+
+    def check_shutdown(self) -> bool:
+        """Check if shutdown was requested."""
+        return self.shutdown_requested
+
+    def set_browser_refs(self, playwright, browser, context, page):
+        """Store browser references for cleanup."""
+        self.playwright = playwright
+        self.browser = browser
+        self.context = context
+        self.page = page
+
+    def cleanup(self):
+        """Clean up browser resources."""
+        print("\n🧹 CLEANING UP...")
+
+        # Close page
+        if self.page:
+            try:
+                print("   → Closing page...")
+                self.page.close()
+                print("   ✅ Page closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing page: {e}")
+            finally:
+                self.page = None
+
+        # Close context
+        if self.context:
+            try:
+                print("   → Closing context...")
+                self.context.close()
+                print("   ✅ Context closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing context: {e}")
+            finally:
+                self.context = None
+
+        # Close browser
+        if self.browser:
+            try:
+                print("   → Closing browser...")
+                self.browser.close()
+                print("   ✅ Browser closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing browser: {e}")
+            finally:
+                self.browser = None
+
+        # Stop playwright
+        if self.playwright:
+            try:
+                print("   → Stopping Playwright...")
+                self.playwright.stop()
+                print("   ✅ Playwright stopped")
+            except Exception as e:
+                print(f"   ⚠️  Error stopping Playwright: {e}")
+            finally:
+                self.playwright = None
+
+        print("✅ CLEANUP COMPLETE")
+
+    def restore_handlers(self):
+        """Restore original signal handlers."""
+        if self._original_sigint:
+            signal.signal(signal.SIGINT, self._original_sigint)
+        if self._original_sigbreak and platform.system() == "Windows":
+            try:
+                signal.signal(signal.SIGBREAK, self._original_sigbreak)
+            except AttributeError:
+                pass
+
+
 # ============ LOOP DETECTION ============
 class LoopDetector:
     """Detects and breaks infinite loops by tracking visual state and actions."""
@@ -780,6 +903,9 @@ def run_adaptive_agent(
         learning_db = init_learning_db()
         reflection = AgentReflection(learning_db)
 
+        # Initialize graceful shutdown handler
+        shutdown_handler = GracefulShutdown()
+
         # Initialize loop detector
         loop_detector = LoopDetector()
         print("🔄 Loop detection enabled")
@@ -807,6 +933,9 @@ def run_adaptive_agent(
                 page = context.new_page()
                 page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
 
+                # Store browser references for cleanup
+                shutdown_handler.set_browser_refs(p, browser, context, page)
+
                 conversation_history = []
                 collected_data = []
                 last_url = ""
@@ -817,6 +946,11 @@ def run_adaptive_agent(
 
                 for step in range(MAX_STEPS):
                     print(f"\n{'='*70}\nSTEP {step + 1}/{MAX_STEPS}\n{'='*70}")
+
+                    # Check for shutdown request (Ctrl+C)
+                    if shutdown_handler.check_shutdown():
+                        print("✅ Stopping gracefully due to shutdown request...")
+                        break
 
                     time.sleep(random.uniform(1.0, 1.8))
 
@@ -1523,6 +1657,17 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
         _emit(f"Unhandled agent error: {error_message}", level="error")
     finally:
         builtins.print = original_print
+
+        # Cleanup browser resources if shutdown was requested
+        if 'shutdown_handler' in locals():
+            try:
+                if shutdown_handler.check_shutdown():
+                    print("\n👋 Agent stopped: User interrupt (Ctrl+C)")
+                    shutdown_handler.cleanup()
+                shutdown_handler.restore_handlers()
+            except Exception as cleanup_error:
+                print(f"⚠️  Cleanup error: {cleanup_error}")
+
         if reflection:
             try:
                 progress_summary = reflection.get_progress_summary()
