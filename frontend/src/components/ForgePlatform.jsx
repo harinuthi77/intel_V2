@@ -346,15 +346,14 @@ export default function ForgePlatform() {
           position: 'relative',
           minHeight: 0,
           minWidth: 0,
-          overflow: 'hidden'
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '12px'
         }}>
           {phase === 'IDLE' ? (
             <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '100%',
-              height: '100%',
               fontSize: '14px',
               color: '#6b7280'
             }}>
@@ -400,25 +399,29 @@ export default function ForgePlatform() {
                 </div>
               )}
 
-              {/* Canvas - Full HD 1920x1080 to match Playwright viewport */}
-              <canvas
-                ref={canvasRef}
-                width={1920}
-                height={1080}
-                style={{
-                  position: 'absolute',
-                  top: '12px',
-                  left: '12px',
-                  right: '12px',
-                  bottom: '12px',
-                  width: 'calc(100% - 24px)',
-                  height: 'calc(100% - 24px)',
-                  backgroundColor: '#1a1a1a',
-                  borderRadius: '8px',
-                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                  border: '1px solid #333'
-                }}
-              />
+              {/* Canvas Wrapper with 16:9 Aspect Ratio - Playwright/Puppeteer Method */}
+              <div style={{
+                width: '100%',
+                aspectRatio: '16 / 9',
+                maxHeight: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <canvas
+                  ref={canvasRef}
+                  width={1920}
+                  height={1080}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    backgroundColor: '#1a1a1a',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+                    border: '1px solid #333'
+                  }}
+                />
+              </div>
             </>
           )}
         </div>
