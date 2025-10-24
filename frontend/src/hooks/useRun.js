@@ -122,12 +122,17 @@ export function useRun(sessionId, callbacks = {}) {
           } else if (message.type === 'frame') {
             // If we were connecting, we're now running
             if (phase === 'BROWSER_CONNECTING') {
+              console.log('🎬 First frame received, transitioning to RUNNING')
               setPhase('RUNNING')
             }
             // Render browser frame
-            renderFrame(message.data)
-            setCurrentUrl(message.url)
-            updateFPS()
+            if (message.data) {
+              renderFrame(message.data)
+              setCurrentUrl(message.url || '')
+              updateFPS()
+            } else {
+              console.warn('⚠️  Received frame message without data')
+            }
           }
         } catch (err) {
           console.error('❌ Error processing control message:', err)
@@ -191,20 +196,30 @@ export function useRun(sessionId, callbacks = {}) {
   // Frame rendering for live browser stream
   const renderFrame = useCallback((base64Frame) => {
     const canvas = canvasRef.current
-    if (!canvas) return
+    if (!canvas) {
+      console.warn('⚠️  Canvas not attached, skipping frame')
+      return
+    }
 
     const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      console.error('❌ Failed to get canvas 2D context')
+      return
+    }
+
     const img = new Image()
 
     img.onload = () => {
       // Resize canvas to match frame dimensions
       if (canvas.width !== img.width || canvas.height !== img.height) {
+        console.log(`📐 Resizing canvas: ${canvas.width}x${canvas.height} → ${img.width}x${img.height}`)
         canvas.width = img.width
         canvas.height = img.height
       }
 
       // Draw frame
       ctx.drawImage(img, 0, 0)
+      // console.log('🖼️  Frame rendered') // Uncomment for verbose logging
     }
 
     img.onerror = (err) => {

@@ -108,11 +108,14 @@ export default function ForgePlatform() {
   }, [task])
 
   // Attach stream to canvas when canvas is ready
-  useEffect(() => {
-    if (canvasRef.current) {
-      attachStream(canvasRef.current)
+  // Note: We attach in a callback ref instead of useEffect for immediate attachment
+  const canvasCallbackRef = useCallback((canvas) => {
+    if (canvas) {
+      canvasRef.current = canvas
+      attachStream(canvas)
+      console.log('✅ Canvas attached and ready for frames')
     }
-  }, [canvasRef.current, attachStream])
+  }, [attachStream])
 
   // Update isActive based on phase
   useEffect(() => {
@@ -1529,18 +1532,49 @@ export default function ForgePlatform() {
             padding: '20px',
             position: 'relative'
           }}>
-            {controlConnected && phase !== 'IDLE' ? (
-              <canvas
-                ref={canvasRef}
-                style={{
-                  maxWidth: '100%',
-                  maxHeight: '100%',
-                  height: 'auto',
-                  borderRadius: '8px',
-                  boxShadow: '0 8px 32px rgba(255, 138, 0, 0.2)',
-                  border: '1px solid rgba(255, 138, 0, 0.2)'
-                }}
-              />
+            {(controlConnected || phase === 'STARTING' || phase === 'BROWSER_CONNECTING' || phase === 'RUNNING') && phase !== 'IDLE' ? (
+              <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                <canvas
+                  ref={canvasCallbackRef}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    height: 'auto',
+                    borderRadius: '8px',
+                    boxShadow: '0 8px 32px rgba(255, 138, 0, 0.2)',
+                    border: '1px solid rgba(255, 138, 0, 0.2)',
+                    display: 'block',
+                    backgroundColor: '#1a1a1a'
+                  }}
+                />
+                {/* Show loading overlay on canvas until first frame arrives */}
+                {(!fps || fps === 0) && phase !== 'COMPLETE' && phase !== 'FAILED' && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '50%',
+                    transform: 'translate(-50%, -50%)',
+                    textAlign: 'center',
+                    color: '#666',
+                    pointerEvents: 'none'
+                  }}>
+                    <div style={{
+                      width: '48px',
+                      height: '48px',
+                      margin: '0 auto 16px',
+                      border: '3px solid #1a1a1a',
+                      borderTopColor: '#ff8a00',
+                      borderRadius: '50%',
+                      animation: 'spin 1.5s linear infinite'
+                    }} />
+                    <div style={{ fontSize: '14px', color: '#888' }}>
+                      {phase === 'STARTING' ? 'Starting...' :
+                       phase === 'BROWSER_CONNECTING' ? 'Connecting to browser...' :
+                       'Waiting for frames...'}
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <div style={{
                 textAlign: 'center',
