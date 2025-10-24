@@ -976,22 +976,17 @@ def run_adaptive_agent(
                 browser = None
                 context = None
                 page = None
-                print(f"🚀 Launching Chromium (headless=True)...")
+                print(f"🚀 Launching Chromium (headless={config.headless})...")
                 browser = p.chromium.launch(
-                    headless=True,  # ALWAYS headless for embedded view
-                    args=[
-                        '--disable-blink-features=AutomationControlled',
-                        '--no-sandbox',
-                        '--disable-setuid-sandbox'
-                    ]
+                    headless=config.headless,
+                    args=['--disable-blink-features=AutomationControlled']
                 )
                 print("✅ Browser launched successfully")
 
-                print("📱 Creating browser context (1280x720)...")
+                print("📱 Creating browser context (1920x1080)...")
                 context = browser.new_context(
-                    viewport={'width': 1280, 'height': 720},  # Fixed stable viewport
-                    device_scale_factor=1.0,  # Prevent zoom changes
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 )
                 print("✅ Context created")
 
