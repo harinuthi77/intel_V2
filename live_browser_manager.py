@@ -395,7 +395,7 @@ async def get_live_browser() -> LiveBrowserManager:
     async with _browser_lock:
         if _live_browser_instance is None:
             _live_browser_instance = LiveBrowserManager()
-            await _live_browser_instance.start(headless=False)
+            await _live_browser_instance.start(headless=True)
 
         return _live_browser_instance
 
