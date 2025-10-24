@@ -127,7 +127,7 @@ print("-" * 80)
 
 # Check viewport configuration in adaptive_agent.py
 adaptive_agent_path = SCRIPT_DIR / 'adaptive_agent.py'
-with open(adaptive_agent_path, 'r') as f:
+with open(adaptive_agent_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     # Test 1: Viewport size set to 1280x720
@@ -165,7 +165,7 @@ assert live_manager_path.exists(), "LiveBrowserManager module not found"
 print("✓ Test 1/6: LiveBrowserManager module exists")
 
 # Test 2: LiveBrowserManager has CDP streaming
-with open(live_manager_path, 'r') as f:
+with open(live_manager_path, 'r', encoding='utf-8') as f:
     content = f.read()
     assert 'class LiveBrowserManager' in content, "LiveBrowserManager class not found"
     assert 'start_streaming' in content, "start_streaming method not found"
@@ -174,7 +174,7 @@ with open(live_manager_path, 'r') as f:
 
 # Test 3: Backend WebSocket endpoint exists
 server_path = SCRIPT_DIR / 'backend' / 'server.py'
-with open(server_path, 'r') as f:
+with open(server_path, 'r', encoding='utf-8') as f:
     content = f.read()
     assert '@app.websocket("/ws/browser")' in content, "WebSocket /ws/browser endpoint not found"
     print("✓ Test 3/6: Backend WebSocket endpoint /ws/browser exists")
@@ -185,7 +185,7 @@ assert livebrowser_path.exists(), "LiveBrowserView.jsx not found"
 print("✓ Test 4/6: Frontend LiveBrowserView component exists")
 
 # Test 5: LiveBrowserView uses WebSocket and Canvas
-with open(livebrowser_path, 'r') as f:
+with open(livebrowser_path, 'r', encoding='utf-8') as f:
     content = f.read()
     assert 'WebSocket' in content, "WebSocket not used in LiveBrowserView"
     assert 'canvas' in content or 'Canvas' in content, "Canvas element not found"
@@ -193,7 +193,7 @@ with open(livebrowser_path, 'r') as f:
 
 # Test 6: ForgePlatform integrates LiveBrowserView
 forge_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'ForgePlatform.jsx'
-with open(forge_path, 'r') as f:
+with open(forge_path, 'r', encoding='utf-8') as f:
     content = f.read()
     assert 'LiveBrowserView' in content, "LiveBrowserView not integrated in ForgePlatform"
     print("✓ Test 6/6: ForgePlatform integrates LiveBrowserView")

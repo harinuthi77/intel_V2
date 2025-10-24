@@ -19,7 +19,7 @@ print("Testing UI Embedding Configuration...")
 # Test 1: Check CORS configuration in backend/server.py
 print("\n1. Checking CORS configuration...")
 server_path = SCRIPT_DIR / 'backend' / 'server.py'
-with open(server_path, 'r') as f:
+with open(server_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     # Check for CORS middleware
@@ -37,7 +37,7 @@ with open(server_path, 'r') as f:
 
 # Test 2: Check WebSocket endpoint for live browser
 print("\n2. Checking WebSocket endpoint...")
-with open(server_path, 'r') as f:
+with open(server_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     assert '@app.websocket("/ws/browser")' in content, "WebSocket /ws/browser endpoint not found"
@@ -50,7 +50,7 @@ with open(server_path, 'r') as f:
 
 # Test 3: Check SSE endpoint for agent events
 print("\n3. Checking SSE endpoint...")
-with open(server_path, 'r') as f:
+with open(server_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     assert '@app.post("/execute/stream")' in content or '@app.get("/events")' in content, "SSE streaming endpoint not found"
@@ -66,7 +66,7 @@ print("\n4. Checking LiveBrowserManager...")
 live_manager_path = SCRIPT_DIR / 'live_browser_manager.py'
 assert live_manager_path.exists(), "live_browser_manager.py not found"
 
-with open(live_manager_path, 'r') as f:
+with open(live_manager_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     assert 'class LiveBrowserManager' in content, "LiveBrowserManager class not found"
@@ -83,7 +83,7 @@ print("\n5. Checking LiveBrowserView component...")
 livebrowser_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'LiveBrowserView.jsx'
 assert livebrowser_path.exists(), "LiveBrowserView.jsx not found"
 
-with open(livebrowser_path, 'r') as f:
+with open(livebrowser_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     assert 'WebSocket' in content, "WebSocket not used in LiveBrowserView"
@@ -101,7 +101,7 @@ print("\n6. Checking ForgePlatform integration...")
 forge_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'ForgePlatform.jsx'
 assert forge_path.exists(), "ForgePlatform.jsx not found"
 
-with open(forge_path, 'r') as f:
+with open(forge_path, 'r', encoding='utf-8') as f:
     content = f.read()
 
     assert 'LiveBrowserView' in content, "LiveBrowserView not imported in ForgePlatform"
@@ -114,7 +114,7 @@ with open(forge_path, 'r') as f:
 print("\n7. Checking frontend dependencies...")
 package_json_path = SCRIPT_DIR / 'frontend' / 'package.json'
 if package_json_path.exists():
-    with open(package_json_path, 'r') as f:
+    with open(package_json_path, 'r', encoding='utf-8') as f:
         content = f.read()
 
         # React should be present
