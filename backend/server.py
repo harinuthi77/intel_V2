@@ -7,6 +7,12 @@ import sys
 import os
 from pathlib import Path
 
+# Fix Windows event loop instability (MUST be before asyncio imports)
+if sys.platform.startswith("win"):
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    print("🪟 Windows detected - using Selector event loop policy")
+
 # Get absolute path to parent directory (where adaptive_agent.py lives)
 BACKEND_DIR = Path(__file__).resolve().parent
 PARENT_DIR = BACKEND_DIR.parent
@@ -69,6 +75,10 @@ app = FastAPI(title="Adaptive Agent Backend", version="1.0.0")
 @app.on_event("startup")
 async def startup_event():
     """Initialize live browser on server startup."""
+    # Capture the main event loop for thread-safe WebSocket sends
+    app.state.loop = asyncio.get_running_loop()
+    logger.info("✅ Captured main event loop for thread-safe operations")
+
     try:
         logger.info("🚀 Initializing live browser manager...")
         browser = await get_live_browser()
@@ -190,21 +200,11 @@ async def execute(request: ExecuteRequest) -> Dict[str, Any]:
         headless=request.headless,
     )
 
-    # Define progress callback that sends to control WebSocket
-    async def ws_progress_callback(event: Dict[str, Any]):
-        """Send progress events to control WebSocket."""
-        await send_control_event(session_id, event)
-
     def sync_progress_callback(event: Dict[str, Any]):
-        """Sync wrapper for progress callback."""
+        """Thread-safe progress callback for background agent execution."""
         _log_event(event)
-        # Schedule async WebSocket send
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.create_task(ws_progress_callback(event))
-        except RuntimeError:
-            # No event loop running
-            pass
+        # Send to WebSocket using thread-safe method
+        send_control_event_threadsafe(session_id, event)
 
     # Start agent execution in background
     loop = asyncio.get_running_loop()
@@ -218,12 +218,12 @@ async def execute(request: ExecuteRequest) -> Dict[str, Any]:
                 "phase": "STARTING"
             })
 
-            # Execute agent
+            # Execute agent (runs in background thread - will use threadsafe callback)
             result: AgentResult = await loop.run_in_executor(
                 None, lambda: run_adaptive_agent(config, progress_callback=sync_progress_callback)
             )
 
-            # Send final result
+            # Send final result (we're back on the main loop here, so regular await is fine)
             await send_control_event(session_id, {
                 "type": "final",
                 "result": result.to_dict()
@@ -470,8 +470,8 @@ async def websocket_browser_stream(websocket: WebSocket):
                     })
 
                 elif command_type == 'pong':
-                    # Ignore pong, it's keepalive response
-                    pass
+                    # Keepalive response from client - just continue
+                    continue
 
                 else:
                     logger.warning(f"⚠️  Unknown command type: {command_type}")
@@ -637,6 +637,31 @@ async def send_control_event(session_id: str, event: Dict[str, Any]):
             await control_websocket_clients[session_id].send_json(event)
         except Exception as e:
             logger.error(f"❌ Failed to send control event to session {session_id}: {e}")
+
+
+def send_control_event_threadsafe(session_id: str, event: Dict[str, Any]):
+    """
+    Thread-safe version of send_control_event for use from background threads.
+
+    Uses run_coroutine_threadsafe to schedule the send on the main event loop.
+    """
+    if session_id not in control_websocket_clients:
+        return
+
+    try:
+        # Get the main event loop (captured at startup)
+        loop = app.state.loop
+
+        # Schedule the coroutine on the main loop from this thread
+        future = asyncio.run_coroutine_threadsafe(
+            send_control_event(session_id, event),
+            loop
+        )
+
+        # Optional: wait for completion with timeout
+        future.result(timeout=1.0)
+    except Exception as e:
+        logger.error(f"❌ Thread-safe control send failed for session {session_id}: {e}")
 
 
 @app.get("/health")

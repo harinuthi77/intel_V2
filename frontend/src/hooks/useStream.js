@@ -22,6 +22,13 @@ export function useStream(sessionId) {
   const reconnectTimeoutRef = useRef(null)
 
   const connectWebSocket = useCallback(() => {
+    // Prevent duplicate sockets (mounts/HMR/route toggles)
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN ||
+                          wsRef.current.readyState === WebSocket.CONNECTING)) {
+      console.log('🟡 Reuse existing /ws/browser socket')
+      return
+    }
+
     try {
       console.log('🔌 Connecting to browser stream WebSocket...')
       const ws = new WebSocket(`${WS_BASE_URL}/ws/browser`)

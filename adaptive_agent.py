@@ -1312,8 +1312,37 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                         }
                     )
 
+                    # Emit step_started event
+                    step_label = f"{action.capitalize()}"
+                    if details and len(details) < 50:
+                        step_label += f": {details}"
+                    elif action == "goto":
+                        step_label += f": Navigate to URL"
+                    elif action == "click":
+                        step_label += f": Click element {details}"
+                    elif action == "type":
+                        step_label += f": Type text"
+                    elif action == "extract":
+                        step_label += ": Extract data from page"
+                    elif action == "analyze":
+                        step_label += ": Analyze collected data"
+
+                    _emit(
+                        f"Step {step + 1}: {step_label}",
+                        level="info",
+                        payload={
+                            "type": "step_started",
+                            "step": {
+                                "id": step + 1,
+                                "label": step_label,
+                                "action": action
+                            }
+                        }
+                    )
+
                     # Execute action
                     success = False
+                    action_error = None
                     try:
                         if action == "done":
                             # Check if this is a data collection task or simple navigation
@@ -1684,10 +1713,33 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                         error_msg = str(e)[:100]
                         print(f"✗ Error: {error_msg}")
                         errors.append(error_msg)
+                        action_error = error_msg
                         learn_from_failure(learning_db, task_type, current_domain, action,
                                          error_msg, json.dumps({'step': step, 'url': current_url}))
                         reflection.record_action(action, False)
+                        success = False
                         time.sleep(1)
+
+                    # Emit step completion event
+                    if success:
+                        _emit(
+                            f"Step {step + 1} completed: {step_label}",
+                            level="info",
+                            payload={
+                                "type": "step_completed",
+                                "id": step + 1
+                            }
+                        )
+                    else:
+                        _emit(
+                            f"Step {step + 1} failed: {action_error or 'Unknown error'}",
+                            level="error",
+                            payload={
+                                "type": "step_failed",
+                                "id": step + 1,
+                                "error": action_error or "Action failed"
+                            }
+                        )
 
                     # End of steps
                     if step == MAX_STEPS - 1:
