@@ -976,17 +976,48 @@ def run_adaptive_agent(
                 browser = None
                 context = None
                 page = None
-                print(f"🚀 Launching Chromium (headless={config.headless})...")
+                print(f"🚀 Launching Chromium (headless=True with FULL STEALTH)...")
                 browser = p.chromium.launch(
-                    headless=config.headless,
-                    args=['--disable-blink-features=AutomationControlled']
+                    headless=True,  # Must be True to embed in UI
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--disable-accelerated-2d-canvas',
+                        '--no-first-run',
+                        '--no-zygote',
+                        '--disable-gpu',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-infobars',
+                        '--window-position=0,0',
+                        '--ignore-certificate-errors',
+                        '--ignore-certificate-errors-spki-list',
+                        '--disable-blink-features=AutomationControlled'
+                    ]
                 )
                 print("✅ Browser launched successfully")
 
-                print("📱 Creating browser context (1920x1080)...")
+                print("📱 Creating browser context with STEALTH settings...")
                 context = browser.new_context(
                     viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                    locale='en-US',
+                    timezone_id='America/New_York',
+                    geolocation={'latitude': 40.7128, 'longitude': -74.0060},
+                    permissions=['geolocation'],
+                    color_scheme='light',
+                    extra_http_headers={
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Cache-Control': 'max-age=0'
+                    }
                 )
                 print("✅ Context created")
 
@@ -994,15 +1025,83 @@ def run_adaptive_agent(
                 page = context.new_page()
                 print("✅ Page created successfully")
 
-                # Hide webdriver detection
-                page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
-
-                # Lock zoom level to prevent viewport instability
+                # COMPREHENSIVE BOT EVASION
+                print("🛡️  Injecting stealth scripts...")
                 page.add_init_script("""
-                    Object.defineProperty(window, 'devicePixelRatio', {
-                        get: () => 1,
-                        configurable: false
+                    // Remove webdriver property
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
                     });
+
+                    // Add chrome object (real browsers have this)
+                    window.chrome = {
+                        runtime: {},
+                        loadTimes: function() {},
+                        csi: function() {},
+                        app: {}
+                    };
+
+                    // Mock plugins (empty = bot detection)
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [
+                            {
+                                0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format"},
+                                description: "Portable Document Format",
+                                filename: "internal-pdf-viewer",
+                                length: 1,
+                                name: "Chrome PDF Plugin"
+                            },
+                            {
+                                0: {type: "application/pdf", suffixes: "pdf", description: "Portable Document Format"},
+                                description: "Portable Document Format",
+                                filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
+                                length: 1,
+                                name: "Chrome PDF Viewer"
+                            },
+                            {
+                                0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable"},
+                                1: {type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable"},
+                                description: "Native Client",
+                                filename: "internal-nacl-plugin",
+                                length: 2,
+                                name: "Native Client"
+                            }
+                        ]
+                    });
+
+                    // Mock languages
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['en-US', 'en']
+                    });
+
+                    // Mock permissions
+                    const originalQuery = window.navigator.permissions.query;
+                    window.navigator.permissions.query = (parameters) => (
+                        parameters.name === 'notifications' ?
+                            Promise.resolve({ state: Notification.permission }) :
+                            originalQuery(parameters)
+                    );
+
+                    // Mock connection
+                    Object.defineProperty(navigator, 'connection', {
+                        get: () => ({
+                            effectiveType: '4g',
+                            rtt: 50,
+                            downlink: 10,
+                            saveData: false
+                        })
+                    });
+
+                    // Mock battery
+                    navigator.getBattery = () => Promise.resolve({
+                        charging: true,
+                        chargingTime: 0,
+                        dischargingTime: Infinity,
+                        level: 1
+                    });
+
+                    // Hide automation
+                    delete navigator.__proto__.webdriver;
                 """)
 
                 # Store browser references for cleanup
