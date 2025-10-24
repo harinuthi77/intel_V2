@@ -949,10 +949,11 @@ def run_adaptive_agent(
                 page = None
                 print(f"🚀 Launching Chromium (headless=True)...")
                 browser = p.chromium.launch(
-                    headless=True,  # Always headless for embedded view
+                    headless=True,  # ALWAYS headless for embedded view
                     args=[
                         '--disable-blink-features=AutomationControlled',
-                        '--force-device-scale-factor=1',  # Stable viewport - no zoom
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox'
                     ]
                 )
                 print("✅ Browser launched successfully")
@@ -1280,12 +1281,15 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     # Parse action
                     action = None
                     details = None
+                    reason = None
                     for line in answer.split('\n'):
                         upper = line.strip().upper()
                         if upper.startswith('ACTION:'):
                             action = line.split(':', 1)[1].strip().lower()
                         if upper.startswith('DETAILS:'):
                             details = line.split(':', 1)[1].strip()
+                        if upper.startswith('REASON:'):
+                            reason = line.split(':', 1)[1].strip()
 
                     if not action:
                         reflection.record_action('parse_error', False)
@@ -1295,6 +1299,18 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     print(f"⚡ EXECUTING: {action.upper()}")
                     if details:
                         print(f"   Details: {details}")
+
+                    # Send thinking to frontend
+                    _emit(
+                        f"THINKING: {reason}" if reason else f"Executing {action}",
+                        level="thinking",
+                        payload={
+                            "type": "thinking",
+                            "action": action,
+                            "details": details,
+                            "reason": reason
+                        }
+                    )
 
                     # Execute action
                     success = False
