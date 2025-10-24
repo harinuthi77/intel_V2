@@ -43,6 +43,9 @@ CONTROL_STATE = defaultdict(lambda: {"paused": False, "stopped": False, "nudge":
 CONTROL_LOCK = Lock()
 CONTROL_CLIENTS = defaultdict(set)  # session_id -> set(WebSocket)
 
+# Default WebSocket clients (for /ws endpoint)
+DEFAULT_WS_CLIENTS = []  # List of WebSocket connections to /ws
+
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
 
@@ -365,6 +368,160 @@ async def navigate(request: NavigateRequest):
     }
 
 
+@app.post("/execute/pause")
+async def pause_execution():
+    """Pause the currently running agent execution.
+
+    Note: This sets a global pause state. For multi-session support,
+    you would need to track session IDs.
+    """
+    logger.info("⏸️  Pause request received")
+
+    # Set pause state for all active sessions (simplified approach)
+    with CONTROL_LOCK:
+        for session_id in CONTROL_STATE:
+            CONTROL_STATE[session_id]["paused"] = True
+
+    # Notify all control clients
+    for session_id in list(CONTROL_CLIENTS.keys()):
+        await send_control_event(session_id, {
+            "type": "status",
+            "phase": "PAUSED"
+        })
+
+    return {
+        "success": True,
+        "status": "paused"
+    }
+
+
+@app.post("/execute/resume")
+async def resume_execution():
+    """Resume the paused agent execution.
+
+    Note: This resumes all paused sessions. For multi-session support,
+    you would need to track session IDs.
+    """
+    logger.info("▶️  Resume request received")
+
+    # Clear pause state for all sessions
+    with CONTROL_LOCK:
+        for session_id in CONTROL_STATE:
+            CONTROL_STATE[session_id]["paused"] = False
+
+    # Notify all control clients
+    for session_id in list(CONTROL_CLIENTS.keys()):
+        await send_control_event(session_id, {
+            "type": "status",
+            "phase": "RUNNING"
+        })
+
+    return {
+        "success": True,
+        "status": "resumed"
+    }
+
+
+class MessageRequest(BaseModel):
+    """Payload for sending a message to the running agent."""
+    message: str = Field(..., description="Message text to send to agent")
+    session_id: str = Field(default="", description="Session ID (optional)")
+
+
+@app.post("/execute/message")
+async def send_agent_message(request: MessageRequest):
+    """Send a message to the running agent as a nudge/instruction.
+
+    The message will be injected into the agent's context for consideration.
+    """
+    logger.info(f"💬 Message from user: {request.message[:100]}...")
+
+    # Set nudge in control state for all sessions (simplified)
+    with CONTROL_LOCK:
+        for session_id in CONTROL_STATE:
+            CONTROL_STATE[session_id]["nudge"] = request.message
+
+    # Notify all control clients
+    for session_id in list(CONTROL_CLIENTS.keys()):
+        await send_control_event(session_id, {
+            "type": "user_message",
+            "message": request.message
+        })
+
+    return {
+        "success": True,
+        "message": "Message sent to agent"
+    }
+
+
+@app.websocket("/ws")
+async def websocket_default(websocket: WebSocket):
+    """
+    Default WebSocket endpoint for agent execution streaming.
+
+    This handles the simple /ws connection from the frontend.
+    Streams:
+    - Browser frames
+    - Agent thinking
+    - Step progress
+    - Errors
+    """
+    await websocket.accept()
+    DEFAULT_WS_CLIENTS.append(websocket)
+    client_id = f"{websocket.client.host}:{websocket.client.port}"
+
+    logger.info(f"🔵 WebSocket connected (/ws): {client_id} (total: {len(DEFAULT_WS_CLIENTS)})")
+
+    try:
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+
+                msg_type = message.get('type')
+                logger.info(f"📨 Received message: {msg_type}")
+
+                if msg_type == 'stop':
+                    # Set stop state for all sessions
+                    with CONTROL_LOCK:
+                        for session_id in CONTROL_STATE:
+                            CONTROL_STATE[session_id]["stopped"] = True
+
+                    await websocket.send_json({
+                        'type': 'command_ack',
+                        'command': 'stop'
+                    })
+
+                elif msg_type == 'ping':
+                    await websocket.send_json({
+                        'type': 'pong',
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+            except asyncio.TimeoutError:
+                # Send keepalive ping
+                try:
+                    await websocket.send_json({'type': 'ping'})
+                except:
+                    break
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"❌ Error processing message: {e}")
+                break
+
+    except WebSocketDisconnect:
+        logger.info(f"🔴 WebSocket disconnected (/ws): {client_id}")
+
+    except Exception as e:
+        logger.error(f"❌ WebSocket error (/ws): {e}")
+
+    finally:
+        if websocket in DEFAULT_WS_CLIENTS:
+            DEFAULT_WS_CLIENTS.remove(websocket)
+        logger.info(f"🔴 WebSocket closed (/ws): {client_id} (remaining: {len(DEFAULT_WS_CLIENTS)})")
+
+
 @app.websocket("/ws/browser")
 async def websocket_browser_stream(websocket: WebSocket):
     """
@@ -619,6 +776,32 @@ def send_browser_frame(session_id: str, frame_b64: str, url: str):
     """Send a browser frame to all clients subscribed to this session."""
     event = {"type": "frame", "data": frame_b64, "url": url}
     send_control_event_threadsafe(session_id, event)
+
+    # Also send to default WS clients
+    send_to_default_ws_clients_threadsafe(event)
+
+
+def send_to_default_ws_clients_threadsafe(event: Dict[str, Any]):
+    """Thread-safe broadcast to all /ws clients."""
+    try:
+        loop = app.state.loop
+        future = asyncio.run_coroutine_threadsafe(
+            broadcast_to_default_ws(event),
+            loop
+        )
+        future.result(timeout=1.0)
+    except Exception as e:
+        logger.error(f"❌ Failed to broadcast to default WS clients: {e}")
+
+
+async def broadcast_to_default_ws(event: Dict[str, Any]):
+    """Broadcast event to all /ws clients."""
+    for ws in list(DEFAULT_WS_CLIENTS):
+        try:
+            await ws.send_json(event)
+        except Exception as e:
+            logger.error(f"❌ Failed to send to WS client: {e}")
+            DEFAULT_WS_CLIENTS.remove(ws)
 
 
 @app.get("/health")
