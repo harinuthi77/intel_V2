@@ -35,6 +35,7 @@ from live_browser_manager import get_live_browser, close_live_browser
 # Global browser session management
 active_sessions = {}
 connected_websocket_clients = []
+control_websocket_clients = {}  # session_id -> WebSocket
 
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
@@ -157,10 +158,30 @@ def _log_event(event: Dict[str, Any]) -> None:
     log_fn(message)
 
 
-@app.post("/execute", response_model=ExecuteResponse)
-async def execute(request: ExecuteRequest) -> ExecuteResponse:
-    """Execute the adaptive agent and return structured results."""
+@app.post("/execute")
+async def execute(request: ExecuteRequest) -> Dict[str, Any]:
+    """
+    Start agent execution and return session_id for WebSocket connections.
 
+    Returns:
+        {"session_id": "uuid", "accepted": true}
+    """
+    # Generate unique session ID
+    import uuid
+    session_id = str(uuid.uuid4())
+
+    logger.info(f"🚀 Starting agent execution with session_id: {session_id}")
+
+    # Store session info
+    active_sessions[session_id] = {
+        "task": request.task,
+        "model": request.model,
+        "tools": request.tools,
+        "status": "starting",
+        "created_at": datetime.now().isoformat()
+    }
+
+    # Create config
     config = AgentConfig(
         task=request.task,
         model=request.model,
@@ -169,17 +190,69 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
         headless=request.headless,
     )
 
+    # Define progress callback that sends to control WebSocket
+    async def ws_progress_callback(event: Dict[str, Any]):
+        """Send progress events to control WebSocket."""
+        await send_control_event(session_id, event)
+
+    def sync_progress_callback(event: Dict[str, Any]):
+        """Sync wrapper for progress callback."""
+        _log_event(event)
+        # Schedule async WebSocket send
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.create_task(ws_progress_callback(event))
+        except RuntimeError:
+            # No event loop running
+            pass
+
+    # Start agent execution in background
     loop = asyncio.get_running_loop()
 
-    try:
-        result: AgentResult = await loop.run_in_executor(
-            None, lambda: run_adaptive_agent(config, progress_callback=_log_event)
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("Agent execution failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    async def run_agent():
+        """Run agent and update status."""
+        try:
+            # Send starting status
+            await send_control_event(session_id, {
+                "type": "status",
+                "phase": "STARTING"
+            })
 
-    return ExecuteResponse(**result.to_dict())
+            # Execute agent
+            result: AgentResult = await loop.run_in_executor(
+                None, lambda: run_adaptive_agent(config, progress_callback=sync_progress_callback)
+            )
+
+            # Send final result
+            await send_control_event(session_id, {
+                "type": "final",
+                "result": result.to_dict()
+            })
+
+            # Update session status
+            active_sessions[session_id]["status"] = "complete" if result.success else "failed"
+            active_sessions[session_id]["result"] = result.to_dict()
+
+        except Exception as exc:
+            logger.exception(f"Agent execution failed for session {session_id}")
+
+            # Send error
+            await send_control_event(session_id, {
+                "type": "error",
+                "message": str(exc)
+            })
+
+            # Update session status
+            active_sessions[session_id]["status"] = "error"
+            active_sessions[session_id]["error"] = str(exc)
+
+    # Start agent execution as background task
+    asyncio.create_task(run_agent())
+
+    return {
+        "session_id": session_id,
+        "accepted": True
+    }
 
 
 @app.post("/execute/stream")
@@ -438,6 +511,134 @@ async def websocket_browser_stream(websocket: WebSocket):
                 pass
 
 
+@app.websocket("/ws/control")
+async def websocket_control_channel(websocket: WebSocket):
+    """
+    WebSocket endpoint for agent control and status updates.
+
+    Server → Client events:
+    - {"type":"status", "phase":"STARTING|CONNECTING|RUNNING|PAUSED|STOPPED|COMPLETE|FAILED"}
+    - {"type":"step_started", "step": {"id": 2, "label":"Navigate to ..."}}
+    - {"type":"step_completed", "id": 2}
+    - {"type":"step_failed", "id": 2, "error":"Timeout ..."}
+    - {"type":"log", "level":"info|warn|error", "message":"..."}
+    - {"type":"final", "result": {...}}
+
+    Client → Server commands:
+    - {"type":"pause"} | {"type":"resume"} | {"type":"stop"}
+    - {"type":"nudge", "text":"Use the first result"}
+    """
+    await websocket.accept()
+
+    # Extract session_id from query params
+    session_id = websocket.query_params.get("session_id", "unknown")
+    client_id = f"{websocket.client.host}:{websocket.client.port}"
+
+    logger.info(f"🔵 Control WS connected: {client_id} (session: {session_id})")
+
+    # Store connection
+    control_websocket_clients[session_id] = websocket
+
+    try:
+        # Send initial connection confirmation
+        await websocket.send_json({
+            'type': 'status',
+            'phase': 'IDLE',
+            'message': 'Control channel connected'
+        })
+
+        # Listen for commands from client
+        while True:
+            try:
+                message = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+
+                command_type = message.get('type')
+                logger.info(f"🎮 Control command from {client_id}: {command_type}")
+
+                # Handle control commands
+                if command_type == 'pause':
+                    # TODO: Implement pause functionality
+                    logger.info(f"⏸️  Pause requested for session {session_id}")
+                    await websocket.send_json({
+                        'type': 'command_ack',
+                        'command': 'pause',
+                        'status': 'acknowledged'
+                    })
+
+                elif command_type == 'resume':
+                    # TODO: Implement resume functionality
+                    logger.info(f"▶️  Resume requested for session {session_id}")
+                    await websocket.send_json({
+                        'type': 'command_ack',
+                        'command': 'resume',
+                        'status': 'acknowledged'
+                    })
+
+                elif command_type == 'stop':
+                    # TODO: Implement stop functionality
+                    logger.info(f"⏹️  Stop requested for session {session_id}")
+                    await websocket.send_json({
+                        'type': 'command_ack',
+                        'command': 'stop',
+                        'status': 'acknowledged'
+                    })
+
+                elif command_type == 'nudge':
+                    text = message.get('text', '')
+                    # TODO: Implement nudge functionality
+                    logger.info(f"💡 Nudge received for session {session_id}: {text}")
+                    await websocket.send_json({
+                        'type': 'command_ack',
+                        'command': 'nudge',
+                        'status': 'acknowledged',
+                        'text': text
+                    })
+
+                elif command_type == 'ping':
+                    # Heartbeat/keepalive
+                    await websocket.send_json({
+                        'type': 'pong',
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+                else:
+                    logger.warning(f"⚠️  Unknown control command: {command_type}")
+
+            except asyncio.TimeoutError:
+                # Send keepalive ping
+                try:
+                    await websocket.send_json({'type': 'ping'})
+                except:
+                    break
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"❌ Error processing control command from {client_id}: {e}")
+                break
+
+    except WebSocketDisconnect:
+        logger.info(f"🔴 Control WS disconnected (client): {client_id}")
+
+    except Exception as e:
+        logger.error(f"❌ Control WS error for {client_id}: {e}")
+
+    finally:
+        # Clean up
+        if session_id in control_websocket_clients:
+            del control_websocket_clients[session_id]
+
+        logger.info(f"🔴 Control WS closed: {client_id} (session: {session_id})")
+
+
+async def send_control_event(session_id: str, event: Dict[str, Any]):
+    """Send an event to the control WebSocket for a specific session."""
+    if session_id in control_websocket_clients:
+        try:
+            await control_websocket_clients[session_id].send_json(event)
+        except Exception as e:
+            logger.error(f"❌ Failed to send control event to session {session_id}: {e}")
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint to verify backend is running."""
@@ -449,6 +650,7 @@ async def health_check():
             "execute_stream": "/execute/stream",
             "navigate": "/navigate",
             "live_browser_ws": "/ws/browser",
+            "control_ws": "/ws/control",
             "health": "/health",
             "docs": "/docs"
         },
@@ -457,10 +659,12 @@ async def health_check():
             "live_browser_streaming": True,
             "manual_control": True,
             "interactive_browser": True,
-            "integrated_frontend": STATIC_DIR.exists()
+            "integrated_frontend": STATIC_DIR.exists(),
+            "control_channel": True
         },
         "websocket": {
-            "active_connections": len(connected_websocket_clients)
+            "active_browser_connections": len(connected_websocket_clients),
+            "active_control_connections": len(control_websocket_clients)
         }
     }
 

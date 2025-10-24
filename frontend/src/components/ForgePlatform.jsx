@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2 } from 'lucide-react'
+import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2, Square, SkipForward } from 'lucide-react'
 import LiveBrowserView from './LiveBrowserView'
+import { useRun } from '../hooks/useRun'
+import { useStream } from '../hooks/useStream'
 
 // API Configuration - Auto-detect for integrated mode, fallback to dev mode
 const API_BASE_URL = window.location.port === '5173'
@@ -12,29 +14,42 @@ export default function ForgePlatform() {
   const [isActive, setIsActive] = useState(false)
   const [model, setModel] = useState('claude')
   const [showArtifact, setShowArtifact] = useState(true)  // Changed to true - always show Live Output
-  const [isPaused, setIsPaused] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedFolders, setExpandedFolders] = useState(['recent'])
   const [hoveredChat, setHoveredChat] = useState(null)
-  const [executionSteps, setExecutionSteps] = useState([])
-  const [currentStep, setCurrentStep] = useState(null)
-  const [taskResult, setTaskResult] = useState(null)
-  const [error, setError] = useState(null)
-  const [currentScreenshot, setCurrentScreenshot] = useState(null)
   const [agentThinking, setAgentThinking] = useState('')
   const [agentPlan, setAgentPlan] = useState([])
   const [showBrowserView, setShowBrowserView] = useState(true)
-  const [currentUrl, setCurrentUrl] = useState('')
   const [manualControl, setManualControl] = useState(false)
   const [activeView, setActiveView] = useState('browser') // browser, terminal, code, analytics
-  const [terminalOutput, setTerminalOutput] = useState([])
-  const [codeOutput, setCodeOutput] = useState([])
-  const [analyticsData, setAnalyticsData] = useState(null)
   const [streamingLogs, setStreamingLogs] = useState([])  // NEW: For real-time log streaming
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [isResizing, setIsResizing] = useState(false)
   const textareaRef = useRef(null)
+  const canvasRef = useRef(null)
+
+  // Use the custom hooks for agent control and browser stream
+  const {
+    phase,
+    steps: executionSteps,
+    currentStep,
+    error,
+    result: taskResult,
+    connected: controlConnected,
+    pause,
+    resume,
+    stop,
+    nudge
+  } = useRun(sessionId)
+
+  const {
+    attach: attachStream,
+    connected: streamConnected,
+    fps,
+    currentUrl
+  } = useStream(sessionId)
 
   const chatFolders = {
     recent: {
@@ -79,6 +94,22 @@ export default function ForgePlatform() {
       textareaRef.current.style.height = newHeight + 'px'
     }
   }, [task])
+
+  // Attach stream to canvas when canvas is ready
+  useEffect(() => {
+    if (canvasRef.current) {
+      attachStream(canvasRef.current)
+    }
+  }, [canvasRef.current, attachStream])
+
+  // Update isActive based on phase
+  useEffect(() => {
+    if (phase === 'RUNNING' || phase === 'STARTING') {
+      setIsActive(true)
+    } else if (phase === 'COMPLETE' || phase === 'FAILED' || phase === 'STOPPED') {
+      setIsActive(false)
+    }
+  }, [phase])
 
   const toggleTool = (toolId) => {
     setActiveTools(prev => 
@@ -153,27 +184,13 @@ export default function ForgePlatform() {
     if (!task.trim()) return
 
     setIsActive(true)
-    setError(null)
-    setTaskResult(null)
-    setCurrentScreenshot(null)
-    setCurrentUrl('')
-    setStreamingLogs([])  // Reset streaming logs for new execution
-
-    // Initialize execution steps
-    const initialSteps = [
-      { id: 1, action: 'Initializing agent', status: 'in-progress', timestamp: new Date() },
-      { id: 2, action: 'Analyzing task', status: 'pending', timestamp: null },
-      { id: 3, action: 'Executing actions', status: 'pending', timestamp: null },
-      { id: 4, action: 'Gathering results', status: 'pending', timestamp: null },
-      { id: 5, action: 'Finalizing output', status: 'pending', timestamp: null }
-    ]
-
-    setExecutionSteps(initialSteps)
-    setCurrentStep(initialSteps[0])
+    setAgentThinking('')
+    setAgentPlan([])
+    setStreamingLogs([])
 
     try {
-      // Use EventSource for streaming
-      const response = await fetch(`${API_BASE_URL}/execute/stream`, {
+      // Call /execute endpoint to get session_id
+      const response = await fetch(`${API_BASE_URL}/execute`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -192,128 +209,17 @@ export default function ForgePlatform() {
         throw new Error(data.detail || data.message || 'Task execution failed')
       }
 
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
+      const data = await response.json()
+      const newSessionId = data.session_id
 
-      while (true) {
-        const { done, value } = await reader.read()
+      console.log('✅ Agent execution started with session_id:', newSessionId)
 
-        if (done) {
-          setIsActive(false)
-          break
-        }
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const eventData = JSON.parse(line.slice(6))
-
-            if (eventData.type === 'event') {
-              const event = eventData.event
-
-              // Capture ALL events for live streaming logs
-              setStreamingLogs(prev => [...prev, event])
-
-              // Handle screenshot updates
-              if (event.payload?.type === 'screenshot') {
-                console.log('📸 Screenshot received:', {
-                  url: event.payload.url,
-                  imageLength: event.payload.image?.length,
-                  step: event.payload.step
-                })
-                setCurrentScreenshot(event.payload.image)
-                setCurrentUrl(event.payload.url || '')
-                setShowBrowserView(true)
-                setActiveView('browser')
-
-                // Update step status
-                setExecutionSteps(prev => prev.map((step, idx) =>
-                  idx === 2 ? { ...step, status: 'in-progress', timestamp: new Date() } :
-                  idx < 2 ? { ...step, status: 'completed', timestamp: new Date() } : step
-                ))
-              }
-
-              // Capture thinking/reasoning
-              if (event.payload?.type === 'thinking') {
-                setAgentThinking(event.payload.reason || '')
-                setAgentPlan(prev => [...prev, {
-                  action: event.payload.action,
-                  details: event.payload.details,
-                  timestamp: new Date()
-                }])
-              }
-
-              // Handle terminal output
-              if (event.payload?.type === 'terminal') {
-                setTerminalOutput(prev => [...prev, {
-                  command: event.payload.command,
-                  output: event.payload.output,
-                  error: event.payload.error,
-                  timestamp: new Date()
-                }])
-                setActiveView('terminal')
-              }
-
-              // Handle code execution
-              if (event.payload?.type === 'code') {
-                setCodeOutput(prev => [...prev, {
-                  code: event.payload.code,
-                  output: event.payload.output,
-                  error: event.payload.error,
-                  timestamp: new Date()
-                }])
-                setActiveView('code')
-              }
-
-              // Handle analytics
-              if (event.payload?.type === 'analytics') {
-                setAnalyticsData(event.payload.analysis)
-                setActiveView('analytics')
-              }
-
-              console.log('📡 Event:', event.message)
-            } else if (eventData.type === 'final') {
-              const result = eventData.result
-
-              if (result.success) {
-                const completedSteps = initialSteps.map(step => ({
-                  ...step,
-                  status: 'completed',
-                  timestamp: new Date()
-                }))
-                setExecutionSteps(completedSteps)
-                setTaskResult(result)
-                setCurrentStep(null)
-                console.log('✅ Task completed:', result)
-              } else {
-                setError(result.message || 'Task execution failed')
-                setExecutionSteps(prev => prev.map(step =>
-                  step.status === 'in-progress'
-                    ? { ...step, status: 'error', timestamp: new Date() }
-                    : step
-                ))
-              }
-            } else if (eventData.type === 'error') {
-              throw new Error(eventData.message)
-            }
-          }
-        }
-      }
+      // Store session ID - this will trigger the useRun and useStream hooks
+      setSessionId(newSessionId)
 
     } catch (err) {
       console.error('❌ Error:', err)
-      setError(err.message)
       setIsActive(false)
-
-      setExecutionSteps(prev => prev.map(step =>
-        step.status === 'in-progress'
-          ? { ...step, status: 'error', timestamp: new Date() }
-          : step
-      ))
     }
   }
 
@@ -1122,14 +1028,31 @@ export default function ForgePlatform() {
           }} />
           <div style={{
             padding: '4px 10px',
-            background: error ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 138, 0, 0.15)',
-            border: `1px solid ${error ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255, 138, 0, 0.3)'}`,
+            background: error || phase === 'FAILED' ? 'rgba(239, 68, 68, 0.15)' :
+                       phase === 'COMPLETE' ? 'rgba(34, 197, 94, 0.15)' :
+                       phase === 'PAUSED' ? 'rgba(250, 204, 21, 0.15)' :
+                       'rgba(255, 138, 0, 0.15)',
+            border: `1px solid ${
+              error || phase === 'FAILED' ? 'rgba(239, 68, 68, 0.3)' :
+              phase === 'COMPLETE' ? 'rgba(34, 197, 94, 0.3)' :
+              phase === 'PAUSED' ? 'rgba(250, 204, 21, 0.3)' :
+              'rgba(255, 138, 0, 0.3)'
+            }`,
             borderRadius: '4px',
             fontSize: '11px',
-            color: error ? '#ef4444' : '#ff8a00',
+            color: error || phase === 'FAILED' ? '#ef4444' :
+                   phase === 'COMPLETE' ? '#22c55e' :
+                   phase === 'PAUSED' ? '#facc15' :
+                   '#ff8a00',
             fontWeight: '600'
           }}>
-            {error ? 'ERROR' : taskResult ? 'COMPLETE' : 'FORGING'}
+            {error || phase === 'FAILED' ? 'ERROR' :
+             phase === 'COMPLETE' ? 'COMPLETE' :
+             phase === 'PAUSED' ? 'PAUSED' :
+             phase === 'STOPPED' ? 'STOPPED' :
+             phase === 'STARTING' ? 'STARTING' :
+             phase === 'RUNNING' ? 'FORGING' :
+             'IDLE'}
           </div>
         </div>
 
@@ -1137,13 +1060,14 @@ export default function ForgePlatform() {
           display: 'flex',
           gap: '8px'
         }}>
-          <button 
+          <button
             onClick={() => {
               setIsActive(false)
               setTask('')
-              setError(null)
-              setTaskResult(null)
-              setExecutionSteps([])
+              setSessionId(null)
+              setAgentThinking('')
+              setAgentPlan([])
+              setStreamingLogs([])
             }}
             style={{
               padding: '6px 12px',
@@ -1305,84 +1229,200 @@ export default function ForgePlatform() {
           </div>
         </div>
 
-        {/* CENTER PANEL - Browser View (60%) */}
+        {/* CENTER PANEL - Live Browser Stream (60%) */}
         <div style={{
           flex: 1,
           background: '#000000',
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          flexDirection: 'column',
           position: 'relative',
-          overflow: 'hidden',
-          padding: '20px'
+          overflow: 'hidden'
         }}>
-          {currentScreenshot ? (
-            <img
-              src={`data:image/png;base64,${currentScreenshot}`}
-              alt="Browser view"
-              style={{
-                maxWidth: '100%',
-                maxHeight: '100%',
-                height: 'auto',
-                borderRadius: '8px',
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                border: '1px solid #1a1a1a'
-              }}
-            />
-          ) : (
+          {/* Control Bar */}
+          {isActive && (
             <div style={{
-              textAlign: 'center',
-              color: '#666'
+              padding: '12px 20px',
+              background: '#0d0d0d',
+              borderBottom: '1px solid #1a1a1a',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              flexShrink: 0
             }}>
-              {error ? (
-                <>
-                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
-                  <div style={{ fontSize: '16px', color: '#ef4444' }}>Task Failed</div>
-                  <div style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>{error}</div>
-                </>
-              ) : isActive ? (
-                <>
+              {/* Pause/Resume Button */}
+              <button
+                onClick={() => phase === 'PAUSED' ? resume() : pause()}
+                disabled={phase !== 'RUNNING' && phase !== 'PAUSED'}
+                style={{
+                  padding: '6px 12px',
+                  background: '#0d0d0d',
+                  border: '1px solid #222',
+                  borderRadius: '6px',
+                  color: '#cccccc',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: '500'
+                }}
+              >
+                {phase === 'PAUSED' ? (
+                  <>
+                    <Play size={14} />
+                    Resume
+                  </>
+                ) : (
+                  <>
+                    <Pause size={14} />
+                    Pause
+                  </>
+                )}
+              </button>
+
+              {/* Stop Button */}
+              <button
+                onClick={stop}
+                disabled={phase !== 'RUNNING' && phase !== 'PAUSED'}
+                style={{
+                  padding: '6px 12px',
+                  background: '#0d0d0d',
+                  border: '1px solid #222',
+                  borderRadius: '6px',
+                  color: '#ef4444',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: '500'
+                }}
+              >
+                <Square size={14} />
+                Stop
+              </button>
+
+              {/* Connection Status */}
+              <div style={{
+                marginLeft: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                fontSize: '11px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  color: controlConnected ? '#22c55e' : '#888'
+                }}>
                   <div style={{
-                    width: '60px',
-                    height: '60px',
-                    margin: '0 auto 24px',
-                    border: '3px solid #1a1a1a',
-                    borderTopColor: '#ff8a00',
+                    width: '6px',
+                    height: '6px',
                     borderRadius: '50%',
-                    animation: 'spin 1.5s linear infinite'
+                    background: controlConnected ? '#22c55e' : '#888',
+                    animation: controlConnected ? 'pulse 2s ease-in-out infinite' : 'none'
                   }} />
-                  <div style={{ fontSize: '16px', color: '#fff', marginBottom: '8px' }}>
-                    Waiting for browser...
+                  Control {controlConnected ? 'Connected' : 'Disconnected'}
+                </div>
+                {streamConnected && (
+                  <div style={{
+                    padding: '4px 8px',
+                    background: 'rgba(255, 138, 0, 0.1)',
+                    border: '1px solid rgba(255, 138, 0, 0.3)',
+                    borderRadius: '4px',
+                    color: '#ff8a00',
+                    fontWeight: '600',
+                    fontFamily: 'monospace'
+                  }}>
+                    {fps} FPS
                   </div>
-                </>
-              ) : (
-                <div style={{ fontSize: '16px', color: '#666' }}>No browser view</div>
-              )}
+                )}
+              </div>
             </div>
           )}
 
-          {/* URL Badge */}
-          {currentUrl && currentUrl !== 'about:blank' && (
-            <div style={{
-              position: 'absolute',
-              top: '20px',
-              left: '20px',
-              right: '20px',
-              padding: '8px 16px',
-              background: 'rgba(0, 0, 0, 0.8)',
-              backdropFilter: 'blur(10px)',
-              borderRadius: '8px',
-              fontSize: '12px',
-              color: '#888',
-              fontFamily: 'monospace',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              border: '1px solid #1a1a1a'
-            }}>
-              🌐 {currentUrl}
-            </div>
-          )}
+          {/* Browser Canvas */}
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px',
+            position: 'relative'
+          }}>
+            {streamConnected ? (
+              <canvas
+                ref={canvasRef}
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  height: 'auto',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 32px rgba(255, 138, 0, 0.2)',
+                  border: '1px solid rgba(255, 138, 0, 0.2)'
+                }}
+              />
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                color: '#666'
+              }}>
+                {error ? (
+                  <>
+                    <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
+                    <div style={{ fontSize: '16px', color: '#ef4444' }}>Task Failed</div>
+                    <div style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>{error}</div>
+                  </>
+                ) : isActive ? (
+                  <>
+                    <div style={{
+                      width: '60px',
+                      height: '60px',
+                      margin: '0 auto 24px',
+                      border: '3px solid #1a1a1a',
+                      borderTopColor: '#ff8a00',
+                      borderRadius: '50%',
+                      animation: 'spin 1.5s linear infinite'
+                    }} />
+                    <div style={{ fontSize: '16px', color: '#fff', marginBottom: '8px' }}>
+                      {phase === 'STARTING' ? 'Starting agent...' : 'Connecting to browser...'}
+                    </div>
+                    {currentStep && (
+                      <div style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>
+                        {currentStep.label || currentStep.action}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div style={{ fontSize: '16px', color: '#666' }}>No browser stream</div>
+                )}
+              </div>
+            )}
+
+            {/* URL Badge */}
+            {currentUrl && currentUrl !== 'about:blank' && (
+              <div style={{
+                position: 'absolute',
+                top: '20px',
+                left: '20px',
+                right: '20px',
+                padding: '8px 16px',
+                background: 'rgba(0, 0, 0, 0.8)',
+                backdropFilter: 'blur(10px)',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: '#888',
+                fontFamily: 'monospace',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                border: '1px solid #1a1a1a'
+              }}>
+                🌐 {currentUrl}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT PANEL - Live Logs (20%) */}
