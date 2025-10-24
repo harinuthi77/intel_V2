@@ -1502,9 +1502,53 @@ export default function ForgePlatform() {
                 overflow: 'auto',
                 background: '#000000'
               }}>
-                {/* Browser View - Live Streaming via CDP */}
+                {/* Browser View - Shows agent screenshots from SSE stream */}
                 {activeView === 'browser' && (
-                  <LiveBrowserView />
+                  <div style={{
+                    height: '100%',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '20px'
+                  }}>
+                    {currentScreenshot ? (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                        <div style={{
+                          color: '#888888',
+                          marginBottom: '10px',
+                          fontSize: '14px',
+                          fontFamily: 'monospace'
+                        }}>
+                          🌐 {currentUrl || 'Loading...'}
+                        </div>
+                        <img
+                          src={`data:image/png;base64,${currentScreenshot}`}
+                          alt="Agent browser view"
+                          style={{
+                            width: '100%',
+                            height: 'auto',
+                            maxHeight: 'calc(100% - 40px)',
+                            objectFit: 'contain',
+                            border: '1px solid #333',
+                            borderRadius: '4px'
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{
+                        color: '#666666',
+                        textAlign: 'center',
+                        fontFamily: 'monospace'
+                      }}>
+                        <div style={{ fontSize: '48px', marginBottom: '20px' }}>🌐</div>
+                        <div>Waiting for agent to start browsing...</div>
+                        <div style={{ fontSize: '12px', marginTop: '10px', color: '#444' }}>
+                          Screenshots will appear here as the agent navigates
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Terminal View */}
