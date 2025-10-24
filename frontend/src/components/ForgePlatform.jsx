@@ -45,7 +45,14 @@ export default function ForgePlatform() {
     attach: attachStream,
     fps,
     currentUrl
-  } = useRun(sessionId)
+  } = useRun(sessionId, {
+    onThinking: (thought) => {
+      setAgentThinking(thought.reason || thought.action)
+    },
+    onLog: (log) => {
+      setStreamingLogs(prev => [...prev.slice(-100), log]) // Keep last 100
+    }
+  })
 
   // Note: useStream is for manual control browser (LiveBrowserManager)
   // Agent's browser now streams through control channel (useRun)
@@ -1132,6 +1139,84 @@ export default function ForgePlatform() {
             </div>
           </div>
 
+          {/* Error Display */}
+          {error && (
+            <div style={{
+              padding: '12px',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderLeft: '3px solid #ef4444',
+              borderRadius: '6px',
+              animation: 'slideIn 0.3s ease-out'
+            }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+                marginBottom: '8px'
+              }}>
+                <div style={{
+                  fontSize: '11px',
+                  color: '#ef4444',
+                  fontWeight: '700',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  ⚠️ Error
+                </div>
+                <button
+                  onClick={() => setError(null)}
+                  style={{
+                    padding: '2px',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#ef4444',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    lineHeight: 1
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <div style={{
+                fontSize: '12px',
+                color: '#ccc',
+                lineHeight: '1.5',
+                marginBottom: '8px'
+              }}>
+                {error}
+              </div>
+              <button
+                onClick={() => {
+                  setError(null)
+                  setSessionId(null)
+                  setIsActive(false)
+                  setTask('')
+                }}
+                style={{
+                  padding: '6px 12px',
+                  background: 'rgba(239, 68, 68, 0.2)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  borderRadius: '4px',
+                  color: '#ef4444',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'rgba(239, 68, 68, 0.3)'
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'rgba(239, 68, 68, 0.2)'
+                }}
+              >
+                Start New Task
+              </button>
+            </div>
+          )}
+
           {/* Current Thinking */}
           {agentThinking && (
             <div style={{
@@ -1169,17 +1254,20 @@ export default function ForgePlatform() {
               letterSpacing: '1px',
               fontWeight: '600'
             }}>
-              Execution Plan
+              Execution Steps
             </div>
-            {agentPlan.slice(-5).map((step, idx) => (
-              <div key={idx} style={{
+            {executionSteps.slice(-10).map((step, idx) => (
+              <div key={step.id || idx} style={{
                 fontSize: '12px',
                 color: '#ccc',
                 marginBottom: '12px',
                 paddingLeft: '24px',
                 position: 'relative',
                 paddingBottom: '12px',
-                borderBottom: idx < agentPlan.slice(-5).length - 1 ? '1px solid #1a1a1a' : 'none'
+                borderBottom: idx < executionSteps.slice(-10).length - 1 ? '1px solid #1a1a1a' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
               }}>
                 <div style={{
                   position: 'absolute',
@@ -1188,7 +1276,9 @@ export default function ForgePlatform() {
                   width: '16px',
                   height: '16px',
                   borderRadius: '4px',
-                  background: idx === agentPlan.slice(-5).length - 1 ? '#ff8a00' : '#22c55e',
+                  background: step.status === 'completed' ? '#22c55e' :
+                             step.status === 'error' ? '#ef4444' :
+                             step.status === 'in-progress' ? '#ff8a00' : '#666',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -1196,24 +1286,35 @@ export default function ForgePlatform() {
                   fontWeight: '700',
                   color: '#000'
                 }}>
-                  {idx === agentPlan.slice(-5).length - 1 ? '⋯' : '✓'}
+                  {step.status === 'completed' ? '✓' :
+                   step.status === 'error' ? '✗' :
+                   step.status === 'in-progress' ? '⋯' : '○'}
                 </div>
-                <div style={{
-                  fontWeight: '600',
-                  marginBottom: '4px',
-                  color: '#fff',
-                  textTransform: 'uppercase',
-                  fontSize: '11px',
-                  letterSpacing: '0.5px'
-                }}>
-                  {step.action}
-                </div>
-                <div style={{
-                  fontSize: '11px',
-                  color: '#888',
-                  lineHeight: '1.4'
-                }}>
-                  {step.details}
+                <div style={{ flex: 1 }}>
+                  <div style={{
+                    fontWeight: '600',
+                    marginBottom: '4px',
+                    color: '#fff',
+                    fontSize: '11px',
+                    letterSpacing: '0.5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}>
+                    <span>{step.label || step.action}</span>
+                    {step.duration && (
+                      <span style={{
+                        fontSize: '10px',
+                        color: '#666',
+                        fontFamily: 'monospace',
+                        padding: '2px 6px',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        borderRadius: '3px'
+                      }}>
+                        {(step.duration / 1000).toFixed(1)}s
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -1307,6 +1408,44 @@ export default function ForgePlatform() {
                 Stop
               </button>
 
+              {/* Skip Button */}
+              <button
+                onClick={() => {
+                  nudge("This step is taking too long. Skip it and try a different approach.")
+                  console.log('⏭️  Skip requested')
+                }}
+                disabled={phase !== 'RUNNING'}
+                style={{
+                  padding: '6px 12px',
+                  background: '#0d0d0d',
+                  border: '1px solid #222',
+                  borderRadius: '6px',
+                  color: phase === 'RUNNING' ? '#facc15' : '#555',
+                  cursor: phase === 'RUNNING' ? 'pointer' : 'not-allowed',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  if (phase === 'RUNNING') {
+                    e.target.style.background = 'rgba(250, 204, 21, 0.1)'
+                    e.target.style.borderColor = 'rgba(250, 204, 21, 0.3)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (phase === 'RUNNING') {
+                    e.target.style.background = '#0d0d0d'
+                    e.target.style.borderColor = '#222'
+                  }
+                }}
+              >
+                <SkipForward size={14} />
+                Skip
+              </button>
+
               {/* Connection Status */}
               <div style={{
                 marginLeft: 'auto',
@@ -1343,6 +1482,40 @@ export default function ForgePlatform() {
                     {fps} FPS
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Current Step Banner */}
+          {currentStep && phase === 'RUNNING' && (
+            <div style={{
+              padding: '12px 20px',
+              background: 'linear-gradient(90deg, rgba(255, 138, 0, 0.15) 0%, rgba(255, 138, 0, 0.05) 100%)',
+              borderBottom: '1px solid rgba(255, 138, 0, 0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              animation: 'slideIn 0.3s ease-out'
+            }}>
+              <Loader2 size={16} style={{ color: '#ff8a00', animation: 'spin 1.5s linear infinite' }} />
+              <div>
+                <div style={{
+                  fontSize: '11px',
+                  color: '#ff8a00',
+                  fontWeight: '700',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '2px'
+                }}>
+                  Step {currentStep.id}
+                </div>
+                <div style={{
+                  fontSize: '13px',
+                  color: '#fff',
+                  fontWeight: '500'
+                }}>
+                  {currentStep.label}
+                </div>
               </div>
             </div>
           )}
@@ -1391,7 +1564,9 @@ export default function ForgePlatform() {
                       animation: 'spin 1.5s linear infinite'
                     }} />
                     <div style={{ fontSize: '16px', color: '#fff', marginBottom: '8px' }}>
-                      {phase === 'STARTING' ? 'Starting agent...' : 'Connecting to browser...'}
+                      {phase === 'STARTING' ? 'Starting agent...' :
+                       phase === 'BROWSER_CONNECTING' ? 'Connecting to browser...' :
+                       'Initializing...'}
                     </div>
                     {currentStep && (
                       <div style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>
@@ -1405,26 +1580,47 @@ export default function ForgePlatform() {
               </div>
             )}
 
-            {/* URL Badge */}
-            {currentUrl && currentUrl !== 'about:blank' && (
+            {/* URL Bar Overlay */}
+            {currentUrl && currentUrl !== 'about:blank' && controlConnected && (
               <div style={{
                 position: 'absolute',
                 top: '20px',
                 left: '20px',
                 right: '20px',
-                padding: '8px 16px',
-                background: 'rgba(0, 0, 0, 0.8)',
+                padding: '10px 16px',
+                background: 'rgba(0, 0, 0, 0.85)',
                 backdropFilter: 'blur(10px)',
                 borderRadius: '8px',
-                fontSize: '12px',
-                color: '#888',
-                fontFamily: 'monospace',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                border: '1px solid #1a1a1a'
+                border: '1px solid rgba(255, 138, 0, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                zIndex: 10,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
               }}>
-                🌐 {currentUrl}
+                <Globe size={14} color="#ff8a00" />
+                <div style={{
+                  fontSize: '12px',
+                  color: '#ccc',
+                  fontFamily: 'monospace',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  flex: 1
+                }}>
+                  {currentUrl}
+                </div>
+                <div style={{
+                  padding: '2px 8px',
+                  background: 'rgba(34, 197, 94, 0.2)',
+                  border: '1px solid rgba(34, 197, 94, 0.4)',
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  color: '#22c55e',
+                  fontWeight: '600'
+                }}>
+                  LIVE
+                </div>
               </div>
             )}
           </div>

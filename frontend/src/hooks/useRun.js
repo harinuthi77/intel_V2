@@ -9,9 +9,13 @@ const WS_BASE_URL = window.location.port === '5173'
  * Hook for managing agent execution via WebSocket control channel
  *
  * @param {string} sessionId - Session ID for the agent execution
+ * @param {Object} callbacks - Optional callbacks { onThinking, onLog }
  * @returns {Object} - { phase, steps, currentStep, error, result, connected, pause, resume, stop, nudge }
  */
-export function useRun(sessionId) {
+export function useRun(sessionId, callbacks = {}) {
+  const { onThinking, onLog } = callbacks
+
+  // Phases: IDLE → STARTING → BROWSER_CONNECTING → RUNNING → PAUSED/STOPPED/COMPLETE/FAILED
   const [phase, setPhase] = useState('IDLE')
   const [steps, setSteps] = useState([])
   const [currentStep, setCurrentStep] = useState(null)
@@ -61,19 +65,19 @@ export function useRun(sessionId) {
                 // Update existing step
                 return prev.map(s =>
                   s.id === step.id
-                    ? { ...s, status: 'in-progress', label: step.label }
+                    ? { ...s, status: 'in-progress', label: step.label, startedAt: Date.now() }
                     : s
                 )
               } else {
                 // Add new step
-                return [...prev, { ...step, status: 'in-progress' }]
+                return [...prev, { ...step, status: 'in-progress', startedAt: Date.now() }]
               }
             })
             setCurrentStep(step)
           } else if (message.type === 'step_completed') {
             setSteps(prev => prev.map(s =>
               s.id === message.id
-                ? { ...s, status: 'completed' }
+                ? { ...s, status: 'completed', endedAt: Date.now(), duration: Date.now() - (s.startedAt || Date.now()) }
                 : s
             ))
             if (currentStep?.id === message.id) {
@@ -90,6 +94,19 @@ export function useRun(sessionId) {
             }
           } else if (message.type === 'log') {
             console.log(`[${message.level}] ${message.message}`)
+            if (onLog) {
+              onLog({ level: message.level, message: message.message })
+            }
+          } else if (message.type === 'thinking') {
+            console.log('🧠 Agent thinking:', message.reason || message.action)
+            // Expose via callback
+            if (onThinking) {
+              onThinking({
+                action: message.action,
+                reason: message.reason,
+                details: message.details
+              })
+            }
           } else if (message.type === 'final') {
             setResult(message.result)
             setPhase(message.result.success ? 'COMPLETE' : 'FAILED')
@@ -103,6 +120,10 @@ export function useRun(sessionId) {
           } else if (message.type === 'command_ack') {
             console.log('✅ Command acknowledged:', message.command)
           } else if (message.type === 'frame') {
+            // If we were connecting, we're now running
+            if (phase === 'BROWSER_CONNECTING') {
+              setPhase('RUNNING')
+            }
             // Render browser frame
             renderFrame(message.data)
             setCurrentUrl(message.url)
