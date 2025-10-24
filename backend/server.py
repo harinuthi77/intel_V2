@@ -375,6 +375,10 @@ async def websocket_browser_stream(websocket: WebSocket):
                         'timestamp': datetime.now().isoformat()
                     })
 
+                elif command_type == 'pong':
+                    # Ignore pong, it's keepalive response
+                    pass
+
                 else:
                     logger.warning(f"⚠️  Unknown command type: {command_type}")
 

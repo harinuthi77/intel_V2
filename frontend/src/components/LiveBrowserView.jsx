@@ -48,7 +48,11 @@ export default function LiveBrowserView() {
         try {
           const message = JSON.parse(event.data)
 
+          // Debug: Log all message types
+          console.log('📨 WebSocket message type:', message.type)
+
           if (message.type === 'frame') {
+            console.log('🖼️  Frame received, size:', message.data?.length || 0)
             // Render live frame to canvas
             renderFrame(message.data)
             setCurrentUrl(message.url)
@@ -60,6 +64,8 @@ export default function LiveBrowserView() {
           } else if (message.type === 'ping') {
             // Respond to ping to keep connection alive
             ws.send(JSON.stringify({ type: 'pong' }))
+          } else {
+            console.log('⚠️  Unknown message type:', message.type, message)
           }
         } catch (err) {
           console.error('❌ Error processing message:', err)

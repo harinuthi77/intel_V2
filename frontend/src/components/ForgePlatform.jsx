@@ -178,7 +178,7 @@ export default function ForgePlatform() {
           task: task,
           model: model,
           tools: activeTools,
-          headless: false,
+          headless: true,  // ✅ No separate window, streams to UI
           max_steps: 40
         }),
       })
