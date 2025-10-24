@@ -186,6 +186,15 @@ async def execute(request: ExecuteRequest) -> ExecuteResponse:
 async def execute_stream(request: ExecuteRequest):
     """Execute the adaptive agent with real-time streaming updates including screenshots."""
 
+    # CRITICAL: Close any existing LiveBrowserManager to avoid browser conflicts
+    # The agent will create its own sync Playwright browser
+    logger.info("🔄 Closing LiveBrowserManager to prevent browser conflicts...")
+    try:
+        await close_live_browser()
+        logger.info("✅ LiveBrowserManager closed successfully")
+    except Exception as e:
+        logger.warning(f"⚠️  LiveBrowserManager close failed (may not be running): {e}")
+
     event_queue = Queue()
 
     def progress_handler(event: Dict[str, Any]) -> None:

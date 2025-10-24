@@ -926,11 +926,13 @@ def run_adaptive_agent(
         task = config.task
         task_type = "search" if "search" in task.lower() or "find" in task.lower() else "navigate"
 
+        print("🌐 Initializing Playwright...")
         with sync_playwright() as p:
             browser = None
             context = None
             page = None
             try:
+                print(f"🚀 Launching Chromium (headless={config.headless})...")
                 browser = p.chromium.launch(
                     headless=config.headless,
                     args=[
@@ -938,12 +940,19 @@ def run_adaptive_agent(
                         '--force-device-scale-factor=1',  # Stable viewport - no zoom
                     ]
                 )
+                print("✅ Browser launched successfully")
+
+                print("📱 Creating browser context (1280x720)...")
                 context = browser.new_context(
                     viewport={'width': 1280, 'height': 720},  # Fixed stable viewport
                     device_scale_factor=1.0,  # Prevent zoom changes
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 )
+                print("✅ Context created")
+
+                print("📄 Creating new page...")
                 page = context.new_page()
+                print("✅ Page created successfully")
 
                 # Hide webdriver detection
                 page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
@@ -966,6 +975,9 @@ def run_adaptive_agent(
                 action_sequence = []
 
                 MAX_STEPS = config.max_steps
+
+                print(f"\n🎬 Starting agent execution loop (max {MAX_STEPS} steps)...")
+                print(f"📍 Current URL: {page.url}")
 
                 for step in range(MAX_STEPS):
                     print(f"\n{'='*70}\nSTEP {step + 1}/{MAX_STEPS}\n{'='*70}")
