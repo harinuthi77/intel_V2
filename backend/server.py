@@ -22,6 +22,8 @@ import logging
 from typing import Any, Dict, List
 from queue import Queue
 from datetime import datetime
+from collections import defaultdict
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +37,11 @@ from live_browser_manager import get_live_browser, close_live_browser
 # Global browser session management
 active_sessions = {}
 connected_websocket_clients = []
+
+# Control state globals (thread-safe)
+CONTROL_STATE = defaultdict(lambda: {"paused": False, "stopped": False, "nudge": None})
+CONTROL_LOCK = Lock()
+CONTROL_CLIENTS = defaultdict(set)  # session_id -> set(WebSocket)
 
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
@@ -68,6 +75,10 @@ app = FastAPI(title="Adaptive Agent Backend", version="1.0.0")
 @app.on_event("startup")
 async def startup_event():
     """Initialize live browser on server startup."""
+    # Capture the main event loop for thread-safe WebSocket sends
+    app.state.loop = asyncio.get_running_loop()
+    logger.info("✅ Captured main event loop for thread-safe operations")
+
     try:
         logger.info("🚀 Initializing live browser manager...")
         browser = await get_live_browser()
@@ -157,29 +168,98 @@ def _log_event(event: Dict[str, Any]) -> None:
     log_fn(message)
 
 
-@app.post("/execute", response_model=ExecuteResponse)
-async def execute(request: ExecuteRequest) -> ExecuteResponse:
-    """Execute the adaptive agent and return structured results."""
+@app.post("/execute")
+async def execute(request: ExecuteRequest) -> Dict[str, Any]:
+    """
+    Start agent execution and return session_id for WebSocket connections.
 
+    Returns:
+        {"session_id": "uuid", "accepted": true}
+    """
+    # Generate unique session ID
+    import uuid
+    session_id = str(uuid.uuid4())
+
+    logger.info(f"🚀 Starting agent execution with session_id: {session_id}")
+
+    # Store session info
+    active_sessions[session_id] = {
+        "task": request.task,
+        "model": request.model,
+        "tools": request.tools,
+        "status": "starting",
+        "created_at": datetime.now().isoformat()
+    }
+
+    # Create stream callback for browser frames
+    def stream_callback(frame_b64: str, url: str):
+        """Thread-safe callback for browser frame streaming."""
+        send_browser_frame(session_id, frame_b64, url)
+
+    # Create config with control state (defaultdict auto-creates entry)
     config = AgentConfig(
         task=request.task,
         model=request.model,
         tools=request.tools,
         max_steps=request.max_steps,
         headless=request.headless,
+        control_state=CONTROL_STATE[session_id],
+        stream_callback=stream_callback
     )
 
+    def sync_progress_callback(event: Dict[str, Any]):
+        """Thread-safe progress callback for background agent execution."""
+        _log_event(event)
+        # Send to WebSocket using thread-safe method
+        send_control_event_threadsafe(session_id, event)
+
+    # Start agent execution in background
     loop = asyncio.get_running_loop()
 
-    try:
-        result: AgentResult = await loop.run_in_executor(
-            None, lambda: run_adaptive_agent(config, progress_callback=_log_event)
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("Agent execution failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    async def run_agent():
+        """Run agent and update status."""
+        try:
+            # Send starting status
+            await send_control_event(session_id, {
+                "type": "status",
+                "phase": "STARTING"
+            })
 
-    return ExecuteResponse(**result.to_dict())
+            # Execute agent (runs in background thread - will use threadsafe callback)
+            result: AgentResult = await loop.run_in_executor(
+                None, lambda: run_adaptive_agent(config, progress_callback=sync_progress_callback)
+            )
+
+            # Send final result (we're back on the main loop here, so regular await is fine)
+            await send_control_event(session_id, {
+                "type": "final",
+                "result": result.to_dict()
+            })
+
+            # Update session status
+            active_sessions[session_id]["status"] = "complete" if result.success else "failed"
+            active_sessions[session_id]["result"] = result.to_dict()
+
+        except Exception as exc:
+            logger.exception(f"Agent execution failed for session {session_id}")
+
+            # Send error
+            await send_control_event(session_id, {
+                "type": "error",
+                "message": str(exc)
+            })
+
+            # Update session status
+            active_sessions[session_id]["status"] = "error"
+            active_sessions[session_id]["error"] = str(exc)
+
+    # Start agent execution as background task
+    asyncio.create_task(run_agent())
+
+    return {
+        "session_id": session_id,
+        "accepted": True
+    }
 
 
 @app.post("/execute/stream")
@@ -397,8 +477,8 @@ async def websocket_browser_stream(websocket: WebSocket):
                     })
 
                 elif command_type == 'pong':
-                    # Ignore pong, it's keepalive response
-                    pass
+                    # Keepalive response from client - just continue
+                    continue
 
                 else:
                     logger.warning(f"⚠️  Unknown command type: {command_type}")
@@ -438,6 +518,109 @@ async def websocket_browser_stream(websocket: WebSocket):
                 pass
 
 
+@app.websocket("/ws/control")
+async def websocket_control_channel(websocket: WebSocket):
+    """
+    WebSocket endpoint for agent control and status updates.
+
+    Server → Client events:
+    - {"type":"status", "phase":"STARTING|CONNECTING|RUNNING|PAUSED|STOPPED|COMPLETE|FAILED"}
+    - {"type":"step_started", "step": {"id": 2, "label":"Navigate to ..."}}
+    - {"type":"step_completed", "id": 2}
+    - {"type":"step_failed", "id": 2, "error":"Timeout ..."}
+    - {"type":"log", "level":"info|warn|error", "message":"..."}
+    - {"type":"final", "result": {...}}
+
+    Client → Server commands:
+    - {"type":"pause"} | {"type":"resume"} | {"type":"stop"}
+    - {"type":"nudge", "text":"Use the first result"}
+    """
+    await websocket.accept()
+    session_id = websocket.query_params.get("session_id", "unknown")
+
+    logger.info(f"🔵 Control WS connected (session: {session_id})")
+
+    # Store in CONTROL_CLIENTS set
+    CONTROL_CLIENTS[session_id].add(websocket)
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            cmd = msg.get("type")
+
+            logger.info(f"🎮 Control command: {cmd} (session: {session_id})")
+
+            # Update control state
+            with CONTROL_LOCK:
+                if cmd == "pause":
+                    CONTROL_STATE[session_id]["paused"] = True
+                elif cmd == "resume":
+                    CONTROL_STATE[session_id]["paused"] = False
+                elif cmd == "stop":
+                    CONTROL_STATE[session_id]["stopped"] = True
+                elif cmd == "nudge":
+                    CONTROL_STATE[session_id]["nudge"] = msg.get("text")
+                elif cmd == "ping":
+                    # Just ack, no state change
+                    pass
+
+            # Echo acknowledgment
+            await websocket.send_json({"type": "command_ack", "command": cmd})
+
+    except WebSocketDisconnect:
+        logger.info(f"🔴 Control WS disconnected (session: {session_id})")
+
+    except Exception as e:
+        logger.error(f"❌ Control WS error (session: {session_id}): {e}")
+
+    finally:
+        # Clean up
+        CONTROL_CLIENTS[session_id].discard(websocket)
+        logger.info(f"🔴 Control WS closed (session: {session_id})")
+
+
+async def send_control_event(session_id: str, event: Dict[str, Any]):
+    """Send an event to all control WebSockets for a specific session."""
+    if session_id in CONTROL_CLIENTS:
+        for ws in list(CONTROL_CLIENTS[session_id]):
+            try:
+                await ws.send_json(event)
+            except Exception as e:
+                logger.error(f"❌ Failed to send control event: {e}")
+                CONTROL_CLIENTS[session_id].discard(ws)
+
+
+def send_control_event_threadsafe(session_id: str, event: Dict[str, Any]):
+    """
+    Thread-safe version of send_control_event for use from background threads.
+
+    Uses run_coroutine_threadsafe to schedule the send on the main event loop.
+    """
+    if session_id not in CONTROL_CLIENTS:
+        return
+
+    try:
+        # Get the main event loop (captured at startup)
+        loop = app.state.loop
+
+        # Schedule the coroutine on the main loop from this thread
+        future = asyncio.run_coroutine_threadsafe(
+            send_control_event(session_id, event),
+            loop
+        )
+
+        # Optional: wait for completion with timeout
+        future.result(timeout=1.0)
+    except Exception as e:
+        logger.error(f"❌ Thread-safe control send failed for session {session_id}: {e}")
+
+
+def send_browser_frame(session_id: str, frame_b64: str, url: str):
+    """Send a browser frame to all clients subscribed to this session."""
+    event = {"type": "frame", "data": frame_b64, "url": url}
+    send_control_event_threadsafe(session_id, event)
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint to verify backend is running."""
@@ -449,6 +632,7 @@ async def health_check():
             "execute_stream": "/execute/stream",
             "navigate": "/navigate",
             "live_browser_ws": "/ws/browser",
+            "control_ws": "/ws/control",
             "health": "/health",
             "docs": "/docs"
         },
@@ -457,10 +641,12 @@ async def health_check():
             "live_browser_streaming": True,
             "manual_control": True,
             "interactive_browser": True,
-            "integrated_frontend": STATIC_DIR.exists()
+            "integrated_frontend": STATIC_DIR.exists(),
+            "control_channel": True
         },
         "websocket": {
-            "active_connections": len(connected_websocket_clients)
+            "active_browser_connections": len(connected_websocket_clients),
+            "active_control_connections": sum(len(clients) for clients in CONTROL_CLIENTS.values())
         }
     }
 

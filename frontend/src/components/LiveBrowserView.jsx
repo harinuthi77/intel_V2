@@ -33,6 +33,13 @@ export default function LiveBrowserView() {
   }, [])
 
   const connectWebSocket = () => {
+    // Prevent duplicate sockets (mounts/HMR/route toggles)
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN ||
+                          wsRef.current.readyState === WebSocket.CONNECTING)) {
+      console.log('🟡 Reuse existing /ws/browser socket')
+      return
+    }
+
     try {
       console.log('🔌 Connecting to live browser WebSocket...')
       const ws = new WebSocket(`${WS_BASE_URL}/ws/browser`)
