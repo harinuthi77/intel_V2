@@ -51,9 +51,10 @@ export default function ForgePlatform() {
           ));
           break;
 
-        case 'browser_frame':
-          console.log('🖼️ Frame received:', data.frame?.length, 'bytes');
-          if (canvasRef.current && data.frame) {
+        case 'frame':
+          // Backend sends type: 'frame' with 'data' field containing base64 PNG
+          console.log('🖼️ Frame received:', data.data?.length, 'bytes');
+          if (canvasRef.current && data.data) {
             const ctx = canvasRef.current.getContext('2d');
             const img = new Image();
 
@@ -67,7 +68,7 @@ export default function ForgePlatform() {
               console.error('❌ Failed to load frame:', err);
             };
 
-            img.src = `data:image/png;base64,${data.frame}`;
+            img.src = `data:image/png;base64,${data.data}`;
           } else {
             console.warn('⚠️ Canvas ref missing or no frame data');
           }
