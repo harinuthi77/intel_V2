@@ -344,11 +344,11 @@ export default function ForgePlatform() {
         <div style={{
           flex: 1,
           display: 'flex',
-          flexDirection: 'column',
           position: 'relative',
           padding: '12px',
           minHeight: 0,
-          minWidth: 0
+          minWidth: 0,
+          overflow: 'hidden'
         }}>
           {phase === 'IDLE' ? (
             <div style={{
@@ -408,9 +408,9 @@ export default function ForgePlatform() {
                 width={1920}
                 height={1080}
                 style={{
+                  flex: 1,
                   width: '100%',
-                  height: 'auto',
-                  maxWidth: '100%',
+                  height: '100%',
                   objectFit: 'contain',
                   backgroundColor: '#1a1a1a',
                   borderRadius: '8px',
