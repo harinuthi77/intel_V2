@@ -1547,6 +1547,8 @@ export default function ForgePlatform() {
               }}>
                 <canvas
                   ref={canvasCallbackRef}
+                  width={1280}
+                  height={720}
                   style={{
                     maxWidth: '100%',
                     maxHeight: '100%',

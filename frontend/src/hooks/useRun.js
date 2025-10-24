@@ -119,19 +119,25 @@ export function useRun(sessionId, callbacks = {}) {
             ws.send(JSON.stringify({ type: 'pong' }))
           } else if (message.type === 'command_ack') {
             console.log('✅ Command acknowledged:', message.command)
-          } else if (message.type === 'frame') {
+          } else if (message.type === 'frame' || message.type === 'browser_frame') {
+            // Support both 'frame' and 'browser_frame' message types
+            console.log('🖼️  Received frame:', message.data?.length || 0, 'bytes')
+
             // If we were connecting, we're now running
             if (phase === 'BROWSER_CONNECTING') {
               console.log('🎬 First frame received, transitioning to RUNNING')
               setPhase('RUNNING')
             }
+
             // Render browser frame
-            if (message.data) {
-              renderFrame(message.data)
+            if (message.data || message.frame) {
+              const frameData = message.data || message.frame
+              console.log('📊 Frame data type:', typeof frameData, 'starts with:', frameData?.substring(0, 20))
+              renderFrame(frameData)
               setCurrentUrl(message.url || '')
               updateFPS()
             } else {
-              console.warn('⚠️  Received frame message without data')
+              console.warn('⚠️  Received frame message without data/frame field')
             }
           }
         } catch (err) {
@@ -198,8 +204,11 @@ export function useRun(sessionId, callbacks = {}) {
     const canvas = canvasRef.current
     if (!canvas) {
       console.warn('⚠️  Canvas not attached, skipping frame')
+      console.log('Canvas ref current value:', canvasRef)
       return
     }
+
+    console.log('🎨 Canvas found:', canvas.width, 'x', canvas.height)
 
     const ctx = canvas.getContext('2d')
     if (!ctx) {
@@ -210,23 +219,38 @@ export function useRun(sessionId, callbacks = {}) {
     const img = new Image()
 
     img.onload = () => {
-      // Resize canvas to match frame dimensions
+      // Set canvas to standard size if not already set
+      if (canvas.width === 0 || canvas.height === 0) {
+        console.log('📐 Initializing canvas size to 1280x720')
+        canvas.width = 1280
+        canvas.height = 720
+      }
+
+      // Resize canvas to match frame dimensions if different
       if (canvas.width !== img.width || canvas.height !== img.height) {
         console.log(`📐 Resizing canvas: ${canvas.width}x${canvas.height} → ${img.width}x${img.height}`)
         canvas.width = img.width
         canvas.height = img.height
       }
 
+      // Clear canvas before drawing
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+
       // Draw frame
       ctx.drawImage(img, 0, 0)
-      // console.log('🖼️  Frame rendered') // Uncomment for verbose logging
+      console.log('✅ Frame rendered to canvas')
     }
 
     img.onerror = (err) => {
       console.error('❌ Failed to load frame image:', err)
+      console.log('Frame data length:', base64Frame?.length)
+      console.log('Frame data start:', base64Frame?.substring(0, 50))
     }
 
-    img.src = `data:image/jpeg;base64,${base64Frame}`
+    // Support both PNG and JPEG formats
+    const mimeType = base64Frame?.startsWith('iVBOR') ? 'image/png' : 'image/jpeg'
+    img.src = `data:${mimeType};base64,${base64Frame}`
+    console.log('🔄 Loading image with MIME type:', mimeType)
   }, [])
 
   const updateFPS = useCallback(() => {
