@@ -347,7 +347,7 @@ export default function ForgePlatform() {
           alignItems: 'center',
           justifyContent: 'center',
           position: 'relative',
-          padding: '24px',
+          padding: '12px',
           minHeight: 0
         }}>
           {phase === 'IDLE' ? (
@@ -363,8 +363,8 @@ export default function ForgePlatform() {
               {currentUrl && (
                 <div style={{
                   position: 'absolute',
-                  top: '36px',
-                  left: '36px',
+                  top: '24px',
+                  left: '24px',
                   zIndex: 10,
                   display: 'flex',
                   alignItems: 'center',
@@ -403,12 +403,13 @@ export default function ForgePlatform() {
                 width={1920}
                 height={1080}
                 style={{
+                  width: '100%',
+                  height: '100%',
                   maxWidth: '100%',
                   maxHeight: '100%',
-                  width: 'auto',
-                  height: 'auto',
+                  objectFit: 'contain',
                   backgroundColor: '#1a1a1a',
-                  borderRadius: '12px',
+                  borderRadius: '8px',
                   boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
                   border: '1px solid #333'
                 }}
