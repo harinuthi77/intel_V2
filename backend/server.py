@@ -7,12 +7,6 @@ import sys
 import os
 from pathlib import Path
 
-# Fix Windows event loop instability (MUST be before asyncio imports)
-if sys.platform.startswith("win"):
-    import asyncio
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    print("🪟 Windows detected - using Selector event loop policy")
-
 # Get absolute path to parent directory (where adaptive_agent.py lives)
 BACKEND_DIR = Path(__file__).resolve().parent
 PARENT_DIR = BACKEND_DIR.parent
@@ -42,6 +36,10 @@ from live_browser_manager import get_live_browser, close_live_browser
 active_sessions = {}
 connected_websocket_clients = []
 control_websocket_clients = {}  # session_id -> WebSocket
+
+# Agent control state (thread-safe flags for each session)
+import threading
+agent_control_state = {}  # session_id -> {"paused": bool, "stop_requested": bool, "nudges": [str], "lock": Lock}
 
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
@@ -191,13 +189,22 @@ async def execute(request: ExecuteRequest) -> Dict[str, Any]:
         "created_at": datetime.now().isoformat()
     }
 
-    # Create config
+    # Initialize control state for this session
+    agent_control_state[session_id] = {
+        "paused": False,
+        "stop_requested": False,
+        "nudges": [],
+        "lock": threading.Lock()
+    }
+
+    # Create config with control state
     config = AgentConfig(
         task=request.task,
         model=request.model,
         tools=request.tools,
         max_steps=request.max_steps,
         headless=request.headless,
+        control_state=agent_control_state[session_id]
     )
 
     def sync_progress_callback(event: Dict[str, Any]):
@@ -557,8 +564,14 @@ async def websocket_control_channel(websocket: WebSocket):
 
                 # Handle control commands
                 if command_type == 'pause':
-                    # TODO: Implement pause functionality
                     logger.info(f"⏸️  Pause requested for session {session_id}")
+                    if session_id in agent_control_state:
+                        with agent_control_state[session_id]["lock"]:
+                            agent_control_state[session_id]["paused"] = True
+                        await send_control_event(session_id, {
+                            'type': 'status',
+                            'phase': 'PAUSED'
+                        })
                     await websocket.send_json({
                         'type': 'command_ack',
                         'command': 'pause',
@@ -566,8 +579,14 @@ async def websocket_control_channel(websocket: WebSocket):
                     })
 
                 elif command_type == 'resume':
-                    # TODO: Implement resume functionality
                     logger.info(f"▶️  Resume requested for session {session_id}")
+                    if session_id in agent_control_state:
+                        with agent_control_state[session_id]["lock"]:
+                            agent_control_state[session_id]["paused"] = False
+                        await send_control_event(session_id, {
+                            'type': 'status',
+                            'phase': 'RUNNING'
+                        })
                     await websocket.send_json({
                         'type': 'command_ack',
                         'command': 'resume',
@@ -575,8 +594,10 @@ async def websocket_control_channel(websocket: WebSocket):
                     })
 
                 elif command_type == 'stop':
-                    # TODO: Implement stop functionality
                     logger.info(f"⏹️  Stop requested for session {session_id}")
+                    if session_id in agent_control_state:
+                        with agent_control_state[session_id]["lock"]:
+                            agent_control_state[session_id]["stop_requested"] = True
                     await websocket.send_json({
                         'type': 'command_ack',
                         'command': 'stop',
@@ -585,8 +606,10 @@ async def websocket_control_channel(websocket: WebSocket):
 
                 elif command_type == 'nudge':
                     text = message.get('text', '')
-                    # TODO: Implement nudge functionality
                     logger.info(f"💡 Nudge received for session {session_id}: {text}")
+                    if session_id in agent_control_state:
+                        with agent_control_state[session_id]["lock"]:
+                            agent_control_state[session_id]["nudges"].append(text)
                     await websocket.send_json({
                         'type': 'command_ack',
                         'command': 'nudge',

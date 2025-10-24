@@ -43,6 +43,7 @@ class AgentConfig:
     tools: List[str] = field(default_factory=list)
     max_steps: int = 40
     headless: bool = False
+    control_state: Optional[Dict[str, Any]] = None  # Thread-safe control state from server
 
 
 @dataclass
@@ -1002,6 +1003,22 @@ def run_adaptive_agent(
                     if shutdown_handler.check_shutdown():
                         print("✅ Stopping gracefully due to shutdown request...")
                         break
+
+                    # Check for stop request from control channel
+                    if config.control_state:
+                        with config.control_state["lock"]:
+                            if config.control_state["stop_requested"]:
+                                print("🛑 Stop requested via control channel - halting execution")
+                                break
+
+                            # Handle pause
+                            while config.control_state["paused"]:
+                                pass  # Wait
+                                time.sleep(0.5)
+                                # Recheck stop in case it was set while paused
+                                if config.control_state["stop_requested"]:
+                                    print("🛑 Stop requested while paused - halting execution")
+                                    break
 
                     time.sleep(random.uniform(1.0, 1.8))
 
