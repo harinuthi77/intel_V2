@@ -630,9 +630,18 @@ class GracefulShutdown:
         self.playwright = None
         self._original_sigint = None
         self._original_sigbreak = None
+        self._in_main_thread = False
 
-        # Register signal handlers
-        self._register_handlers()
+        # Only register signal handlers if we're in main thread
+        # Signal handlers don't work in background threads (e.g., from FastAPI executor)
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            self._in_main_thread = True
+            self._register_handlers()
+        else:
+            # Running in background thread (e.g., FastAPI executor)
+            # Skip signal handlers - parent process manages lifecycle
+            print("ℹ️  Running in background thread - signal handlers skipped")
 
     def _register_handlers(self):
         """Register signal handlers for graceful shutdown."""
@@ -730,6 +739,10 @@ class GracefulShutdown:
 
     def restore_handlers(self):
         """Restore original signal handlers."""
+        # Only restore if we registered handlers in the first place
+        if not self._in_main_thread:
+            return
+
         if self._original_sigint:
             signal.signal(signal.SIGINT, self._original_sigint)
         if self._original_sigbreak and platform.system() == "Windows":
