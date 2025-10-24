@@ -1,18 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Loader2 } from 'lucide-react';
+import { Play, Square, Loader2, ChevronRight, Clock, CheckCircle2 } from 'lucide-react';
 
 export default function ForgePlatform() {
   const [task, setTask] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
   const [phase, setPhase] = useState('IDLE'); // IDLE, STARTING, RUNNING, COMPLETE
   const [steps, setSteps] = useState([]);
   const [thinking, setThinking] = useState('');
   const [currentUrl, setCurrentUrl] = useState('');
-  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState(null);
 
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
 
-  // WebSocket connection
+  // Initialize WebSocket connection
   useEffect(() => {
     const ws = new WebSocket('ws://localhost:8000/ws');
     wsRef.current = ws;
@@ -23,16 +24,14 @@ export default function ForgePlatform() {
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('📨 WebSocket message:', data.type);
+      console.log('📨 Message:', data.type);
 
       switch(data.type) {
         case 'thinking':
-          console.log('💭 Thinking:', data.content);
           setThinking(data.content);
           break;
 
         case 'step_started':
-          console.log('🚀 Step started:', data.step);
           setSteps(prev => [...prev, {
             id: data.step.id,
             label: data.step.label,
@@ -43,7 +42,6 @@ export default function ForgePlatform() {
           break;
 
         case 'step_completed':
-          console.log('✅ Step completed:', data.step);
           setSteps(prev => prev.map(s =>
             s.id === data.step.id
               ? { ...s, status: 'completed', duration: Date.now() - s.startTime }
@@ -52,47 +50,28 @@ export default function ForgePlatform() {
           break;
 
         case 'frame':
-          // Backend sends type: 'frame' with 'data' field containing base64 PNG
-          console.log('🖼️ Frame received:', data.data?.length, 'bytes');
           if (canvasRef.current && data.data) {
             const ctx = canvasRef.current.getContext('2d');
             const img = new Image();
-
             img.onload = () => {
-              // Full HD 1920x1080 canvas
               ctx.clearRect(0, 0, 1920, 1080);
               ctx.drawImage(img, 0, 0, 1920, 1080);
-              console.log('✅ Frame drawn to canvas (1920x1080)');
             };
-
-            img.onerror = (err) => {
-              console.error('❌ Failed to load frame:', err);
-            };
-
             img.src = `data:image/png;base64,${data.data}`;
-          } else {
-            console.warn('⚠️ Canvas ref missing or no frame data');
           }
-
-          if (data.url) {
-            setCurrentUrl(data.url);
-          }
+          if (data.url) setCurrentUrl(data.url);
           break;
 
         case 'task_complete':
-          console.log('🎉 Task complete');
           setPhase('COMPLETE');
           setIsRunning(false);
           break;
 
         case 'error':
-          console.error('❌ Error:', data.message);
+          setError(data.message);
           setPhase('IDLE');
           setIsRunning(false);
           break;
-
-        default:
-          console.log('Unknown message type:', data.type);
       }
     };
 
@@ -122,11 +101,12 @@ export default function ForgePlatform() {
     setSteps([]);
     setThinking('');
     setCurrentUrl('');
+    setError(null);
 
     // Clear canvas
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
-      ctx.fillStyle = '#1a1a1a';
+      ctx.fillStyle = '#0f0f0f';
       ctx.fillRect(0, 0, 1920, 1080);
     }
 
@@ -145,9 +125,10 @@ export default function ForgePlatform() {
         throw new Error('Failed to start task');
       }
 
-      console.log('✅ Task started successfully');
+      console.log('✅ Task started');
     } catch (error) {
-      console.error('❌ Failed to start task:', error);
+      console.error('❌ Failed to start:', error);
+      setError(error.message);
       setPhase('IDLE');
       setIsRunning(false);
     }
@@ -169,20 +150,24 @@ export default function ForgePlatform() {
       flexDirection: 'column',
       backgroundColor: '#0a0a0a',
       color: '#fff',
-      fontFamily: 'system-ui, -apple-system, sans-serif'
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      overflow: 'hidden'
     }}>
-      {/* Header */}
+      {/* Top Header */}
       <div style={{
-        padding: '16px 24px',
-        borderBottom: '1px solid #222',
+        height: '64px',
+        borderBottom: '1px solid #1f1f1f',
         display: 'flex',
         alignItems: 'center',
-        gap: '16px'
+        padding: '0 24px',
+        gap: '16px',
+        flexShrink: 0
       }}>
         <div style={{
-          fontSize: '20px',
+          fontSize: '24px',
           fontWeight: 700,
-          color: '#f97316'
+          color: '#f97316',
+          letterSpacing: '-0.5px'
         }}>
           FORGE
         </div>
@@ -190,39 +175,42 @@ export default function ForgePlatform() {
           type="text"
           value={task}
           onChange={(e) => setTask(e.target.value)}
-          placeholder="Enter your task..."
+          placeholder="Enter your automation task..."
           disabled={isRunning}
           style={{
             flex: 1,
-            padding: '10px 16px',
+            padding: '12px 16px',
             backgroundColor: '#1a1a1a',
-            border: '1px solid #333',
+            border: '1px solid #2a2a2a',
             borderRadius: '8px',
             color: '#fff',
             fontSize: '14px',
-            outline: 'none'
+            outline: 'none',
+            transition: 'border-color 0.2s'
           }}
+          onFocus={(e) => e.target.style.borderColor = '#f97316'}
+          onBlur={(e) => e.target.style.borderColor = '#2a2a2a'}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !isRunning) {
-              handleStart();
-            }
+            if (e.key === 'Enter' && !isRunning) handleStart();
           }}
         />
         <button
           onClick={isRunning ? handleStop : handleStart}
           disabled={!task.trim() && !isRunning}
           style={{
-            padding: '10px 20px',
-            backgroundColor: isRunning ? '#ef4444' : '#f97316',
+            padding: '12px 24px',
+            backgroundColor: isRunning ? '#dc2626' : '#f97316',
             border: 'none',
             borderRadius: '8px',
             color: '#fff',
             fontSize: '14px',
             fontWeight: 600,
-            cursor: 'pointer',
+            cursor: (!task.trim() && !isRunning) ? 'not-allowed' : 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '8px'
+            gap: '8px',
+            opacity: (!task.trim() && !isRunning) ? 0.5 : 1,
+            transition: 'all 0.2s'
           }}
         >
           {isRunning ? (
@@ -232,122 +220,169 @@ export default function ForgePlatform() {
             </>
           ) : (
             <>
-              <Play size={16} />
+              <Play size={16} fill="#fff" />
               Start
             </>
           )}
         </button>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content Area */}
       <div style={{
         flex: 1,
         display: 'flex',
-        minHeight: 0
+        minHeight: 0,
+        overflow: 'hidden'
       }}>
-        {/* Left Panel */}
+        {/* Left Sidebar - 350px */}
         <div style={{
-          width: '400px',
-          borderRight: '1px solid #222',
+          width: '350px',
+          borderRight: '1px solid #1f1f1f',
           display: 'flex',
           flexDirection: 'column',
-          gap: '16px',
-          padding: '16px',
-          overflowY: 'auto'
+          backgroundColor: '#0a0a0a',
+          flexShrink: 0
         }}>
-          {/* Thinking Panel */}
-          {thinking && (
-            <div style={{
-              padding: '16px',
-              backgroundColor: '#1a1a1a',
-              borderRadius: '8px',
-              border: '1px solid #333'
-            }}>
+          <div style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: '16px'
+          }}>
+            {/* Thinking Section */}
+            {thinking && (
               <div style={{
-                fontSize: '12px',
-                fontWeight: 700,
-                color: '#f97316',
-                marginBottom: '8px'
+                marginBottom: '16px',
+                padding: '16px',
+                backgroundColor: '#1a1a1a',
+                borderRadius: '8px',
+                border: '1px solid #2a2a2a'
               }}>
-                💭 AGENT THINKING
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#f97316',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <Loader2 size={12} className="animate-spin" />
+                  Agent Thinking
+                </div>
+                <div style={{
+                  fontSize: '13px',
+                  lineHeight: '1.6',
+                  color: '#a1a1a1'
+                }}>
+                  {thinking}
+                </div>
               </div>
-              <div style={{
-                fontSize: '13px',
-                lineHeight: '1.6',
-                color: '#d1d5db'
-              }}>
-                {thinking}
-              </div>
-            </div>
-          )}
+            )}
 
-          {/* Steps */}
-          {steps.length > 0 && (
-            <div style={{
-              padding: '16px',
-              backgroundColor: '#1a1a1a',
-              borderRadius: '8px',
-              border: '1px solid #333'
-            }}>
+            {/* Error Section */}
+            {error && (
               <div style={{
-                fontSize: '12px',
-                fontWeight: 700,
-                color: '#f97316',
-                marginBottom: '12px'
+                marginBottom: '16px',
+                padding: '16px',
+                backgroundColor: '#2a1a1a',
+                borderRadius: '8px',
+                border: '1px solid #dc2626'
               }}>
-                EXECUTION TIMELINE
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#dc2626',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '8px'
+                }}>
+                  Error
+                </div>
+                <div style={{
+                  fontSize: '13px',
+                  lineHeight: '1.6',
+                  color: '#fca5a5'
+                }}>
+                  {error}
+                </div>
               </div>
+            )}
+
+            {/* Steps Timeline */}
+            {steps.length > 0 && (
               <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px'
+                padding: '16px',
+                backgroundColor: '#1a1a1a',
+                borderRadius: '8px',
+                border: '1px solid #2a2a2a'
               }}>
-                {steps.map((step, idx) => (
-                  <div key={idx} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '12px',
-                    padding: '8px',
-                    backgroundColor: step.status === 'completed' ? '#1a2e1a' : '#1a1a1a',
-                    borderRadius: '6px',
-                    border: `1px solid ${step.status === 'completed' ? '#22c55e' : '#f97316'}`
-                  }}>
-                    {step.status === 'running' ? (
-                      <Loader2 size={16} className="animate-spin" style={{ color: '#f97316' }} />
-                    ) : (
+                <div style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: '#f97316',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '12px'
+                }}>
+                  Execution Timeline
+                </div>
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}>
+                  {steps.map((step, idx) => (
+                    <div key={idx} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      backgroundColor: step.status === 'completed' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(249, 115, 22, 0.1)',
+                      borderRadius: '6px',
+                      border: `1px solid ${step.status === 'completed' ? '#22c55e' : '#f97316'}`
+                    }}>
+                      {step.status === 'running' ? (
+                        <Loader2 size={16} className="animate-spin" style={{ color: '#f97316', flexShrink: 0 }} />
+                      ) : (
+                        <CheckCircle2 size={16} style={{ color: '#22c55e', flexShrink: 0 }} />
+                      )}
                       <div style={{
-                        width: '16px',
-                        height: '16px',
-                        borderRadius: '50%',
-                        backgroundColor: '#22c55e'
-                      }} />
-                    )}
-                    <div style={{ flex: 1, fontSize: '13px' }}>
-                      {step.label}
-                    </div>
-                    {step.duration && (
-                      <div style={{
-                        fontSize: '11px',
-                        color: '#6b7280'
+                        flex: 1,
+                        fontSize: '13px',
+                        color: step.status === 'completed' ? '#d4d4d4' : '#fff',
+                        lineHeight: '1.4'
                       }}>
-                        {(step.duration / 1000).toFixed(1)}s
+                        {step.label}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {step.duration && (
+                        <div style={{
+                          fontSize: '11px',
+                          color: '#6b7280',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          flexShrink: 0
+                        }}>
+                          <Clock size={10} />
+                          {(step.duration / 1000).toFixed(1)}s
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Right Panel - Canvas */}
+        {/* Right Panel - Browser Canvas */}
         <div style={{
           flex: 1,
           position: 'relative',
-          minHeight: 0,
-          minWidth: 0,
-          overflow: 'hidden',
-          backgroundColor: '#0f0f0f'
+          backgroundColor: '#0f0f0f',
+          overflow: 'hidden'
         }}>
           {phase === 'IDLE' ? (
             <div style={{
@@ -355,42 +390,47 @@ export default function ForgePlatform() {
               top: '50%',
               left: '50%',
               transform: 'translate(-50%, -50%)',
-              fontSize: '14px',
-              color: '#6b7280'
+              textAlign: 'center',
+              color: '#4a4a4a'
             }}>
-              Enter a task and click Start to begin
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>🚀</div>
+              <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px' }}>Ready to automate</div>
+              <div style={{ fontSize: '14px', opacity: 0.7 }}>Enter a task and click Start to begin</div>
             </div>
           ) : (
             <>
-              {/* LIVE Badge */}
+              {/* Live URL Badge */}
               {currentUrl && (
                 <div style={{
                   position: 'absolute',
                   top: '16px',
                   left: '16px',
-                  zIndex: 10,
+                  zIndex: 20,
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  backgroundColor: 'rgba(239, 68, 68, 0.9)',
-                  padding: '8px 16px',
+                  backgroundColor: 'rgba(220, 38, 38, 0.95)',
+                  padding: '8px 14px',
                   borderRadius: '8px',
-                  fontSize: '13px',
+                  fontSize: '12px',
                   fontWeight: 700,
-                  color: 'white'
+                  color: '#fff',
+                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                  backdropFilter: 'blur(10px)'
                 }}>
                   <span style={{
-                    width: '8px',
-                    height: '8px',
-                    backgroundColor: 'white',
-                    borderRadius: '50%'
+                    width: '6px',
+                    height: '6px',
+                    backgroundColor: '#fff',
+                    borderRadius: '50%',
+                    animation: 'pulse 2s infinite'
                   }} />
                   LIVE
+                  <ChevronRight size={12} />
                   <span style={{
-                    marginLeft: '4px',
                     fontWeight: 400,
-                    opacity: 0.9,
-                    maxWidth: '500px',
+                    opacity: 0.95,
+                    maxWidth: '600px',
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap'
@@ -400,7 +440,7 @@ export default function ForgePlatform() {
                 </div>
               )}
 
-              {/* Canvas - Fill entire right panel */}
+              {/* Browser Canvas - ABSOLUTE POSITIONING TO FILL ENTIRE PANEL */}
               <canvas
                 ref={canvasRef}
                 width={1920}
@@ -409,9 +449,11 @@ export default function ForgePlatform() {
                   position: 'absolute',
                   top: 0,
                   left: 0,
+                  right: 0,
+                  bottom: 0,
                   width: '100%',
                   height: '100%',
-                  backgroundColor: '#1a1a1a',
+                  backgroundColor: '#0f0f0f',
                   objectFit: 'contain'
                 }}
               />
