@@ -550,6 +550,8 @@ class AgentReflection:
         
         # Check for no progress
         recent_successes = [a['success'] for a in recent]
+        # Ensure all values are ints before summing (prevent type errors)
+        recent_successes = [int(x) if isinstance(x, (str, bool)) else x for x in recent_successes]
         if sum(recent_successes) == 0:
             return True, "No successful actions in recent steps"
         
