@@ -127,7 +127,7 @@ export default function ForgePlatform() {
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(0, 0, 1280, 720);
+      ctx.fillRect(0, 0, 1920, 1080);
     }
 
     try {
@@ -344,14 +344,19 @@ export default function ForgePlatform() {
         <div style={{
           flex: 1,
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
+          flexDirection: 'column',
           position: 'relative',
           padding: '12px',
-          minHeight: 0
+          minHeight: 0,
+          minWidth: 0
         }}>
           {phase === 'IDLE' ? (
             <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '100%',
+              height: '100%',
               fontSize: '14px',
               color: '#6b7280'
             }}>
@@ -404,9 +409,8 @@ export default function ForgePlatform() {
                 height={1080}
                 style={{
                   width: '100%',
-                  height: '100%',
+                  height: 'auto',
                   maxWidth: '100%',
-                  maxHeight: '100%',
                   objectFit: 'contain',
                   backgroundColor: '#1a1a1a',
                   borderRadius: '8px',
