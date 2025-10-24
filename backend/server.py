@@ -204,10 +204,19 @@ async def execute_stream(request: ExecuteRequest):
         """Stream events to the frontend in real-time."""
         loop = asyncio.get_running_loop()
 
+        logger.info(f"🚀 Starting agent execution for task: {config.task[:50]}...")
+        logger.info(f"   Config: headless={config.headless}, max_steps={config.max_steps}")
+
         # Start agent execution in background
-        agent_task = loop.run_in_executor(
-            None, lambda: run_adaptive_agent(config, progress_callback=progress_handler)
-        )
+        try:
+            agent_task = loop.run_in_executor(
+                None, lambda: run_adaptive_agent(config, progress_callback=progress_handler)
+            )
+            logger.info(f"✅ Agent task started in executor")
+        except Exception as e:
+            logger.error(f"❌ Failed to start agent task: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to start agent: {str(e)}'})}\n\n"
+            return
 
         # Stream events as they arrive
         while True:

@@ -848,10 +848,19 @@ def run_adaptive_agent(
 ) -> AgentResult:
     """Execute the adaptive agent with a structured payload and capture progress."""
 
+    print("=" * 80)
+    print("🚀 run_adaptive_agent CALLED")
+    print("=" * 80)
+
     if isinstance(config, str):
         config = AgentConfig(task=config)
     elif isinstance(config, dict):
         config = AgentConfig(**config)
+
+    print(f"📋 Task: {config.task}")
+    print(f"🔧 Headless: {config.headless}")
+    print(f"📊 Max steps: {config.max_steps}")
+    print("=" * 80)
 
     # Normalize anthropic model name for compatibility with legacy callers
     anthropic_model = (
