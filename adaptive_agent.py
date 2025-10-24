@@ -6,13 +6,32 @@ import time
 import random
 import json
 import sqlite3
+import os
+import signal
+import platform
 from datetime import datetime
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Optional, Union
 import builtins
 
-client = anthropic.Anthropic()
+# Import new capabilities
+from computational_env import get_computational_environment, CodeEditor
+from analytics_engine import get_analytics_engine
+
+# Validate API key
+api_key = os.getenv("ANTHROPIC_API_KEY")
+if not api_key:
+    raise ValueError(
+        "🚨 ANTHROPIC_API_KEY not found in environment variables!\n"
+        "Set it with:\n"
+        "  Windows PowerShell: $env:ANTHROPIC_API_KEY = 'sk-ant-...'\n"
+        "  Windows CMD: set ANTHROPIC_API_KEY=sk-ant-...\n"
+        "  Linux/Mac: export ANTHROPIC_API_KEY='sk-ant-...'\n"
+        "Get your key from: https://console.anthropic.com/settings/keys"
+    )
+
+client = anthropic.Anthropic(api_key=api_key)
 
 
 @dataclass
@@ -224,10 +243,10 @@ def get_site_patterns(conn, domain: str) -> List[Dict]:
     """Retrieve site-specific element patterns"""
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT element_type, selector_patterns, success_count
+        SELECT pattern_type, selector, reliability
         FROM site_patterns
-        WHERE website_domain = ?
-        ORDER BY success_count DESC
+        WHERE domain = ?
+        ORDER BY reliability DESC
         LIMIT 5
     ''', (domain,))
 
@@ -236,7 +255,7 @@ def get_site_patterns(conn, domain: str) -> List[Dict]:
         patterns.append({
             'element_type': row[0],
             'selector_patterns': row[1],
-            'success_count': row[2]
+            'success_count': int(row[2] * 100) if row[2] else 0
         })
 
     return patterns
@@ -531,6 +550,8 @@ class AgentReflection:
         
         # Check for no progress
         recent_successes = [a['success'] for a in recent]
+        # Ensure all values are ints before summing (prevent type errors)
+        recent_successes = [int(x) if isinstance(x, (str, bool)) else x for x in recent_successes]
         if sum(recent_successes) == 0:
             return True, "No successful actions in recent steps"
         
@@ -599,6 +620,242 @@ def remove_labels(page):
     except:
         pass
 
+# ============ GRACEFUL SHUTDOWN ============
+class GracefulShutdown:
+    """Handles graceful shutdown on Ctrl+C and cleanup."""
+
+    def __init__(self):
+        self.shutdown_requested = False
+        self.browser = None
+        self.context = None
+        self.page = None
+        self.playwright = None
+        self._original_sigint = None
+        self._original_sigbreak = None
+        self._in_main_thread = False
+
+        # Only register signal handlers if we're in main thread
+        # Signal handlers don't work in background threads (e.g., from FastAPI executor)
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            self._in_main_thread = True
+            self._register_handlers()
+        else:
+            # Running in background thread (e.g., FastAPI executor)
+            # Skip signal handlers - parent process manages lifecycle
+            print("ℹ️  Running in background thread - signal handlers skipped")
+
+    def _register_handlers(self):
+        """Register signal handlers for graceful shutdown."""
+        # Handle Ctrl+C (SIGINT)
+        self._original_sigint = signal.signal(signal.SIGINT, self._handle_shutdown)
+
+        # Handle Ctrl+Break on Windows (SIGBREAK)
+        if platform.system() == "Windows":
+            try:
+                self._original_sigbreak = signal.signal(signal.SIGBREAK, self._handle_shutdown)
+            except AttributeError:
+                # SIGBREAK not available on this platform
+                pass
+
+        print("🛡️  Graceful shutdown handlers registered (Ctrl+C to stop)")
+
+    def _handle_shutdown(self, signum, frame):
+        """Handle shutdown signal."""
+        if self.shutdown_requested:
+            # Second Ctrl+C - force quit
+            print("\n" + "=" * 70)
+            print("⚠️  FORCE QUIT - Second Ctrl+C received")
+            print("=" * 70)
+            sys.exit(1)
+
+        print("\n" + "=" * 70)
+        print("🛑 SHUTDOWN SIGNAL RECEIVED")
+        print("=" * 70)
+        print("⏳ Finishing current step gracefully...")
+        print("   (Press Ctrl+C again to force quit)")
+        print("=" * 70)
+
+        self.shutdown_requested = True
+
+    def check_shutdown(self) -> bool:
+        """Check if shutdown was requested."""
+        return self.shutdown_requested
+
+    def set_browser_refs(self, playwright, browser, context, page):
+        """Store browser references for cleanup."""
+        self.playwright = playwright
+        self.browser = browser
+        self.context = context
+        self.page = page
+
+    def cleanup(self):
+        """Clean up browser resources."""
+        print("\n🧹 CLEANING UP...")
+
+        # Close page
+        if self.page:
+            try:
+                print("   → Closing page...")
+                self.page.close()
+                print("   ✅ Page closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing page: {e}")
+            finally:
+                self.page = None
+
+        # Close context
+        if self.context:
+            try:
+                print("   → Closing context...")
+                self.context.close()
+                print("   ✅ Context closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing context: {e}")
+            finally:
+                self.context = None
+
+        # Close browser
+        if self.browser:
+            try:
+                print("   → Closing browser...")
+                self.browser.close()
+                print("   ✅ Browser closed")
+            except Exception as e:
+                print(f"   ⚠️  Error closing browser: {e}")
+            finally:
+                self.browser = None
+
+        # Stop playwright
+        if self.playwright:
+            try:
+                print("   → Stopping Playwright...")
+                self.playwright.stop()
+                print("   ✅ Playwright stopped")
+            except Exception as e:
+                print(f"   ⚠️  Error stopping Playwright: {e}")
+            finally:
+                self.playwright = None
+
+        print("✅ CLEANUP COMPLETE")
+
+    def restore_handlers(self):
+        """Restore original signal handlers."""
+        # Only restore if we registered handlers in the first place
+        if not self._in_main_thread:
+            return
+
+        if self._original_sigint:
+            signal.signal(signal.SIGINT, self._original_sigint)
+        if self._original_sigbreak and platform.system() == "Windows":
+            try:
+                signal.signal(signal.SIGBREAK, self._original_sigbreak)
+            except AttributeError:
+                pass
+
+
+# ============ LOOP DETECTION ============
+class LoopDetector:
+    """Detects and breaks infinite loops by tracking visual state and actions."""
+
+    def __init__(self):
+        self.screenshot_hashes = []  # Track last N screenshot hashes
+        self.last_action = None  # Track what action was just taken
+        self.loop_break_attempts = 0  # Track how many times we've tried to break loops
+        self.max_history = 5  # Keep last 5 screenshots
+        self.loop_threshold = 3  # Trigger if same screenshot appears 3 times
+
+    def _hash_screenshot(self, screenshot_bytes: bytes) -> str:
+        """Create hash of screenshot for comparison."""
+        import hashlib
+        return hashlib.md5(screenshot_bytes).hexdigest()[:16]
+
+    def detect_visual_loop(self, screenshot_bytes: bytes) -> bool:
+        """
+        Detect if we're in a visual loop (same screenshot repeating).
+
+        Returns:
+            True if loop detected, False otherwise
+        """
+        # Hash current screenshot
+        current_hash = self._hash_screenshot(screenshot_bytes)
+
+        # Add to history
+        self.screenshot_hashes.append(current_hash)
+
+        # Keep only last N screenshots
+        if len(self.screenshot_hashes) > self.max_history:
+            self.screenshot_hashes.pop(0)
+
+        # Need at least 3 screenshots to detect loop
+        if len(self.screenshot_hashes) < 3:
+            return False
+
+        # Count how many times current hash appears in recent history
+        count = self.screenshot_hashes.count(current_hash)
+
+        if count >= self.loop_threshold:
+            print(f"\n{'='*70}")
+            print(f"🔄 VISUAL LOOP DETECTED: Same screenshot appeared {count} times")
+            print(f"   Screenshot hash: {current_hash}")
+            print(f"   Recent hashes: {self.screenshot_hashes}")
+            print(f"   Last action: {self.last_action}")
+            print(f"{'='*70}\n")
+            return True
+
+        return False
+
+    def get_alternative_action(self) -> str:
+        """
+        Suggest an alternative action to break the loop.
+
+        Returns:
+            String suggesting alternative action
+        """
+        self.loop_break_attempts += 1
+
+        # Track what we've tried
+        alternatives = []
+
+        # If we were scrolling, try clicking instead
+        if self.last_action and 'scroll' in self.last_action.lower():
+            alternatives.append("click_random")
+            alternatives.append("go_back")
+
+        # If we were clicking, try scrolling or going back
+        elif self.last_action and 'click' in self.last_action.lower():
+            alternatives.append("scroll_down")
+            alternatives.append("go_back")
+
+        # If we were typing, try clicking or scrolling
+        elif self.last_action and 'type' in self.last_action.lower():
+            alternatives.append("click_random")
+            alternatives.append("scroll_down")
+
+        # Default alternatives
+        if not alternatives:
+            alternatives = ["click_random", "scroll_down", "go_back"]
+
+        # Rotate through alternatives based on attempt count
+        chosen = alternatives[self.loop_break_attempts % len(alternatives)]
+
+        print(f"💡 BREAKING LOOP - Attempt #{self.loop_break_attempts}")
+        print(f"   → Was trying: {self.last_action}")
+        print(f"   → Will try: {chosen}")
+
+        return chosen
+
+    def record_action(self, action: str):
+        """Record the last action taken."""
+        self.last_action = action
+
+    def reset(self):
+        """Reset loop detector state."""
+        self.screenshot_hashes = []
+        self.last_action = None
+        self.loop_break_attempts = 0
+
+
 # ============ MAIN ADAPTIVE AGENT ============
 def run_adaptive_agent(
     config: Union[AgentConfig, Dict[str, Any], str],
@@ -606,10 +863,19 @@ def run_adaptive_agent(
 ) -> AgentResult:
     """Execute the adaptive agent with a structured payload and capture progress."""
 
+    print("=" * 80)
+    print("🚀 run_adaptive_agent CALLED")
+    print("=" * 80)
+
     if isinstance(config, str):
         config = AgentConfig(task=config)
     elif isinstance(config, dict):
         config = AgentConfig(**config)
+
+    print(f"📋 Task: {config.task}")
+    print(f"🔧 Headless: {config.headless}")
+    print(f"📊 Max steps: {config.max_steps}")
+    print("=" * 80)
 
     # Normalize anthropic model name for compatibility with legacy callers
     anthropic_model = (
@@ -661,6 +927,13 @@ def run_adaptive_agent(
         learning_db = init_learning_db()
         reflection = AgentReflection(learning_db)
 
+        # Initialize graceful shutdown handler
+        shutdown_handler = GracefulShutdown()
+
+        # Initialize loop detector
+        loop_detector = LoopDetector()
+        print("🔄 Loop detection enabled")
+
         print(f"🧠 ADAPTIVE WEB AGENT - Session: {session_id}")
         print(f"🎯 TASK: {config.task}\n")
 
@@ -668,21 +941,48 @@ def run_adaptive_agent(
         task = config.task
         task_type = "search" if "search" in task.lower() or "find" in task.lower() else "navigate"
 
-        with sync_playwright() as p:
-            browser = None
-            context = None
-            page = None
-            try:
+        print("🌐 Initializing Playwright...")
+        try:
+            with sync_playwright() as p:
+                browser = None
+                context = None
+                page = None
+                print(f"🚀 Launching Chromium (headless=True)...")
                 browser = p.chromium.launch(
-                    headless=config.headless,
-                    args=['--disable-blink-features=AutomationControlled']
+                    headless=True,  # ALWAYS headless for embedded view
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox'
+                    ]
                 )
+                print("✅ Browser launched successfully")
+
+                print("📱 Creating browser context (1280x720)...")
                 context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    viewport={'width': 1280, 'height': 720},  # Fixed stable viewport
+                    device_scale_factor=1.0,  # Prevent zoom changes
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 )
+                print("✅ Context created")
+
+                print("📄 Creating new page...")
                 page = context.new_page()
+                print("✅ Page created successfully")
+
+                # Hide webdriver detection
                 page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+
+                # Lock zoom level to prevent viewport instability
+                page.add_init_script("""
+                    Object.defineProperty(window, 'devicePixelRatio', {
+                        get: () => 1,
+                        configurable: false
+                    });
+                """)
+
+                # Store browser references for cleanup
+                shutdown_handler.set_browser_refs(p, browser, context, page)
 
                 conversation_history = []
                 collected_data = []
@@ -692,8 +992,16 @@ def run_adaptive_agent(
 
                 MAX_STEPS = config.max_steps
 
+                print(f"\n🎬 Starting agent execution loop (max {MAX_STEPS} steps)...")
+                print(f"📍 Current URL: {page.url}")
+
                 for step in range(MAX_STEPS):
                     print(f"\n{'='*70}\nSTEP {step + 1}/{MAX_STEPS}\n{'='*70}")
+
+                    # Check for shutdown request (Ctrl+C)
+                    if shutdown_handler.check_shutdown():
+                        print("✅ Stopping gracefully due to shutdown request...")
+                        break
 
                     time.sleep(random.uniform(1.0, 1.8))
 
@@ -796,6 +1104,54 @@ def run_adaptive_agent(
                     print("🗑️  Removing labels...")
                     remove_labels(page)
 
+                    # ============ LOOP DETECTION ============
+                    # Check if we're stuck in a visual loop
+                    if loop_detector.detect_visual_loop(screenshot):
+                        alternative = loop_detector.get_alternative_action()
+
+                        # Execute alternative action to break the loop
+                        if alternative == "click_random":
+                            print("   → Trying: Click random element")
+                            # Click a random visible element
+                            if len(elements) > 0:
+                                random_elem = random.choice(elements[:10])  # Pick from top 10
+                                try:
+                                    page.locator(f'[data-ai-id="{random_elem["id"]}"]').click(timeout=3000)
+                                    print(f"   ✅ Clicked element {random_elem['id']}")
+                                    loop_detector.record_action(f"click {random_elem['id']}")
+                                    reflection.record_action(f"click_{random_elem['id']}", "loop_break")
+                                except Exception as click_err:
+                                    print(f"   ⚠️  Click failed: {click_err}")
+
+                        elif alternative == "scroll_down":
+                            print("   → Trying: Scroll down")
+                            try:
+                                # Scroll 80% of viewport height (720 * 0.8 = 576px)
+                                viewport_height = 720
+                                scroll_distance = int(viewport_height * 0.8)
+                                page.evaluate(f"window.scrollBy({{top: {scroll_distance}, behavior: 'smooth'}})")
+                                time.sleep(0.5)
+                                print(f"   ✅ Scrolled down {scroll_distance}px")
+                                loop_detector.record_action("scroll down")
+                                reflection.record_action("scroll", "loop_break")
+                            except Exception as scroll_err:
+                                print(f"   ⚠️  Scroll failed: {scroll_err}")
+
+                        elif alternative == "go_back":
+                            print("   → Trying: Go back")
+                            try:
+                                page.go_back(timeout=5000)
+                                time.sleep(1.0)
+                                print("   ✅ Went back")
+                                loop_detector.record_action("go back")
+                                reflection.record_action("back", "loop_break")
+                            except Exception as back_err:
+                                print(f"   ⚠️  Go back failed: {back_err}")
+
+                        # Continue to next iteration after breaking loop
+                        print("   ✅ Loop break attempt complete, continuing...\n")
+                        continue
+
                     # Build focused element list (prioritize visible, important elements)
                     visible_elements = [e for e in elements if e['visible']][:30]
                     elem_list = []
@@ -857,10 +1213,16 @@ AVAILABLE ACTIONS:
 ⚡ WORKFLOW: navigate → extract data → analyze ONCE → done
 ⚡ NEVER call "analyze" multiple times - it's a waste! Once you have recommendations, call "done"!
 
+🔧 NEW CAPABILITIES - Multi-Tool Agent:
+- TERMINAL: Execute shell commands for system tasks, file operations, package installs
+- CODE: Run Python code for data processing, analysis, automation
+- ANALYZE_DATA: Deep analytics on collected data (statistics, insights, visualizations)
+- Use these tools when the task requires computation, analysis, or system operations
+
 What's your next intelligent action?
 
-ACTION: [goto/click/type/extract/analyze/done]
-DETAILS: [specific details]
+ACTION: [goto/click/type/extract/analyze/terminal/code/analyze_data/done]
+DETAILS: [specific details - for terminal: command, for code: python code, for analyze_data: json data]
 REASON: [strategic reasoning - why this moves us toward RESULTS]"""
 
                     messages = conversation_history + [{
@@ -884,13 +1246,34 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                         answer = response.content[0].text
                         print(f"\n🤖 AGENT DECISION:\n{answer}\n")
                     except anthropic.AuthenticationError as auth_error:
-                        print(f"\n❌ ANTHROPIC API KEY IS INVALID!")
-                        print(f"Error: {auth_error}")
-                        print("Get a valid key from: https://console.anthropic.com")
+                        error_msg = f"ANTHROPIC API KEY IS INVALID: {str(auth_error)}"
+                        print(f"\n❌ {error_msg}")
+                        print("Get a valid key from: https://console.anthropic.com/settings/keys")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        success = False
                         break
-                    except Exception as api_error:
-                        print(f"\n❌ Claude API call failed: {api_error}")
+                    except anthropic.RateLimitError as rate_error:
+                        error_msg = f"Rate limit exceeded: {str(rate_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        print("Waiting 60 seconds before retry...")
+                        time.sleep(60)
+                        continue
+                    except anthropic.APIError as api_error:
+                        error_msg = f"Anthropic API error: {str(api_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
                         print("Retrying with simpler prompt...")
+                        continue
+                    except Exception as api_error:
+                        error_msg = f"Unexpected API error: {str(api_error)}"
+                        print(f"\n❌ {error_msg}")
+                        errors.append(error_msg)
+                        _emit(error_msg, level="error")
+                        print("Retrying...")
                         continue
 
                     conversation_history.append({"role": "assistant", "content": answer})
@@ -898,12 +1281,15 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     # Parse action
                     action = None
                     details = None
+                    reason = None
                     for line in answer.split('\n'):
                         upper = line.strip().upper()
                         if upper.startswith('ACTION:'):
                             action = line.split(':', 1)[1].strip().lower()
                         if upper.startswith('DETAILS:'):
                             details = line.split(':', 1)[1].strip()
+                        if upper.startswith('REASON:'):
+                            reason = line.split(':', 1)[1].strip()
 
                     if not action:
                         reflection.record_action('parse_error', False)
@@ -913,6 +1299,18 @@ REASON: [strategic reasoning - why this moves us toward RESULTS]"""
                     print(f"⚡ EXECUTING: {action.upper()}")
                     if details:
                         print(f"   Details: {details}")
+
+                    # Send thinking to frontend
+                    _emit(
+                        f"THINKING: {reason}" if reason else f"Executing {action}",
+                        level="thinking",
+                        payload={
+                            "type": "thinking",
+                            "action": action,
+                            "details": details,
+                            "reason": reason
+                        }
+                    )
 
                     # Execute action
                     success = False
@@ -1142,6 +1540,7 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                             page.goto(details, wait_until='domcontentloaded', timeout=30000)
                             success = True
                             reflection.record_action('goto', True)
+                            loop_detector.record_action(f"goto {details}")
                             time.sleep(random.uniform(1.5, 2.5))
 
                         elif action == "type":
@@ -1157,6 +1556,7 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                                 print(f"✓ Typed: {details}")
                                 success = True
                                 reflection.record_action('type', True)
+                                loop_detector.record_action(f"type {details}")
                             else:
                                 print("✗ No input field found")
                                 reflection.record_action('type_no_input', False)
@@ -1176,11 +1576,109 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                                 print(f"✓ Clicked [{elem_id}]: {target['text'][:40]}")
                                 success = True
                                 reflection.record_action('click', True)
+                                loop_detector.record_action(f"click {elem_id}")
                             else:
                                 print(f"✗ Element {elem_id} not found")
                                 reflection.record_action('click_not_found', False)
 
                             time.sleep(random.uniform(1.5, 2.5))
+
+                        elif action == "terminal":
+                            # Execute terminal command
+                            print(f"⚡ Executing terminal command: {details}")
+                            comp_env = get_computational_environment()
+                            result = comp_env.execute_terminal_command(details, timeout=30)
+
+                            if result.success:
+                                print(f"✓ Terminal output:\n{result.output}")
+                                success = True
+                                reflection.record_action('terminal', True)
+
+                                # Send output to frontend
+                                _emit(
+                                    f"Terminal: {details}",
+                                    level="info",
+                                    payload={
+                                        "type": "terminal",
+                                        "command": details,
+                                        "output": result.output,
+                                        "error": result.error,
+                                        "exit_code": result.exit_code
+                                    }
+                                )
+                            else:
+                                print(f"✗ Terminal error: {result.error}")
+                                reflection.record_action('terminal', False)
+
+                            time.sleep(1)
+
+                        elif action == "code":
+                            # Execute Python code
+                            print(f"⚡ Executing Python code...")
+                            comp_env = get_computational_environment()
+                            result = comp_env.execute_python_code(details, timeout=30)
+
+                            if result.success:
+                                print(f"✓ Code output:\n{result.output}")
+                                success = True
+                                reflection.record_action('code', True)
+
+                                # Send output to frontend
+                                _emit(
+                                    f"Code executed successfully",
+                                    level="info",
+                                    payload={
+                                        "type": "code",
+                                        "code": details,
+                                        "output": result.output,
+                                        "error": result.error
+                                    }
+                                )
+                            else:
+                                print(f"✗ Code error: {result.error}")
+                                reflection.record_action('code', False)
+
+                            time.sleep(1)
+
+                        elif action == "analyze_data":
+                            # Deep analytics on collected data
+                            print(f"⚡ Performing deep analytics on {len(collected_data)} items...")
+                            analytics = get_analytics_engine()
+                            analysis = analytics.analyze_extracted_data(collected_data)
+
+                            print(f"✓ Analytics complete!")
+                            print(f"\n📊 Analysis Results:")
+                            print(f"   Total Items: {analysis['data_count']}")
+
+                            if 'prices' in analysis.get('statistics', {}):
+                                stats = analysis['statistics']['prices']
+                                print(f"   Price Range: ${stats['min']:.2f} - ${stats['max']:.2f}")
+                                print(f"   Average: ${stats['mean']:.2f}")
+
+                            if analysis.get('insights'):
+                                print(f"\n💡 Key Insights:")
+                                for insight in analysis['insights'][:3]:
+                                    print(f"   • {insight}")
+
+                            if analysis.get('recommendations'):
+                                print(f"\n🎯 Recommendations:")
+                                for rec in analysis['recommendations']:
+                                    print(f"   • {rec}")
+
+                            success = True
+                            reflection.record_action('analyze_data', True)
+
+                            # Send analytics to frontend
+                            _emit(
+                                f"Analytics: {len(collected_data)} items analyzed",
+                                level="info",
+                                payload={
+                                    "type": "analytics",
+                                    "analysis": analysis
+                                }
+                            )
+
+                            time.sleep(2)
 
                     except Exception as e:
                         error_msg = str(e)[:100]
@@ -1202,22 +1700,36 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
 
                     print(f"\n{reflection.get_progress_summary()}")
 
-            finally:
-                if page is not None:
-                    try:
-                        remove_labels(page)
-                    except Exception:
-                        pass
-                if context:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-                if browser:
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
+        except Exception as playwright_error:
+            print(f"\n{'='*70}")
+            print(f"❌ PLAYWRIGHT INITIALIZATION ERROR")
+            print(f"{'='*70}")
+            print(f"Error: {playwright_error}")
+            print(f"Type: {type(playwright_error).__name__}")
+            import traceback
+            print(f"\nTraceback:")
+            traceback.print_exc()
+            print(f"{'='*70}\n")
+            errors.append(f"Playwright error: {str(playwright_error)}")
+            raise  # Re-raise to be caught by outer exception handler
+
+        finally:
+            # Cleanup browser resources
+            if 'page' in locals() and page is not None:
+                try:
+                    remove_labels(page)
+                except Exception:
+                    pass
+            if 'context' in locals() and context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if 'browser' in locals() and browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
         print(f"\n💾 Learning data saved to: agent_learning.db")
         print(f"📊 Session: {session_id}")
@@ -1225,9 +1737,29 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
     except Exception as exc:  # pragma: no cover - defensive
         error_message = str(exc)
         errors.append(error_message)
+        print(f"\n{'='*70}")
+        print(f"❌ FATAL ERROR IN AGENT EXECUTION")
+        print(f"{'='*70}")
+        print(f"Error: {error_message}")
+        print(f"Type: {type(exc).__name__}")
+        import traceback
+        print(f"\nTraceback:")
+        traceback.print_exc()
+        print(f"{'='*70}\n")
         _emit(f"Unhandled agent error: {error_message}", level="error")
     finally:
         builtins.print = original_print
+
+        # Cleanup browser resources if shutdown was requested
+        if 'shutdown_handler' in locals():
+            try:
+                if shutdown_handler.check_shutdown():
+                    print("\n👋 Agent stopped: User interrupt (Ctrl+C)")
+                    shutdown_handler.cleanup()
+                shutdown_handler.restore_handlers()
+            except Exception as cleanup_error:
+                print(f"⚠️  Cleanup error: {cleanup_error}")
+
         if reflection:
             try:
                 progress_summary = reflection.get_progress_summary()

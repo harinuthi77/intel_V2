@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Upload, Mic, Code, Globe, Image, Database, Zap, Play, Pause, Download, Eye, Hammer, Menu, X, Search, BookOpen, Layers, Grid, FolderKanban, MessageSquarePlus, Settings, Trash2, ChevronDown, ChevronRight, Folder, Loader2 } from 'lucide-react'
+import LiveBrowserView from './LiveBrowserView'
 
 // API Configuration - Auto-detect for integrated mode, fallback to dev mode
 const API_BASE_URL = window.location.port === '5173'
@@ -10,7 +11,7 @@ export default function ForgePlatform() {
   const [task, setTask] = useState('')
   const [isActive, setIsActive] = useState(false)
   const [model, setModel] = useState('claude')
-  const [showArtifact, setShowArtifact] = useState(false)
+  const [showArtifact, setShowArtifact] = useState(true)  // Changed to true - always show Live Output
   const [isPaused, setIsPaused] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -21,9 +22,18 @@ export default function ForgePlatform() {
   const [taskResult, setTaskResult] = useState(null)
   const [error, setError] = useState(null)
   const [currentScreenshot, setCurrentScreenshot] = useState(null)
+  const [agentThinking, setAgentThinking] = useState('')
+  const [agentPlan, setAgentPlan] = useState([])
   const [showBrowserView, setShowBrowserView] = useState(true)
   const [currentUrl, setCurrentUrl] = useState('')
   const [manualControl, setManualControl] = useState(false)
+  const [activeView, setActiveView] = useState('browser') // browser, terminal, code, analytics
+  const [terminalOutput, setTerminalOutput] = useState([])
+  const [codeOutput, setCodeOutput] = useState([])
+  const [analyticsData, setAnalyticsData] = useState(null)
+  const [streamingLogs, setStreamingLogs] = useState([])  // NEW: For real-time log streaming
+  const [sidebarWidth, setSidebarWidth] = useState(280)
+  const [isResizing, setIsResizing] = useState(false)
   const textareaRef = useRef(null)
 
   const chatFolders = {
@@ -108,6 +118,37 @@ export default function ForgePlatform() {
     }
   }
 
+  // Resize handlers for sidebar
+  const handleMouseDown = (e) => {
+    setIsResizing(true)
+    e.preventDefault()
+  }
+
+  const handleMouseMove = (e) => {
+    if (isResizing) {
+      const newWidth = e.clientX
+      // Constrain width between 200px and 500px
+      if (newWidth >= 200 && newWidth <= 500) {
+        setSidebarWidth(newWidth)
+      }
+    }
+  }
+
+  const handleMouseUp = () => {
+    setIsResizing(false)
+  }
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+      }
+    }
+  }, [isResizing, sidebarWidth])
+
   const handleSend = async () => {
     if (!task.trim()) return
 
@@ -116,6 +157,7 @@ export default function ForgePlatform() {
     setTaskResult(null)
     setCurrentScreenshot(null)
     setCurrentUrl('')
+    setStreamingLogs([])  // Reset streaming logs for new execution
 
     // Initialize execution steps
     const initialSteps = [
@@ -140,7 +182,7 @@ export default function ForgePlatform() {
           task: task,
           model: model,
           tools: activeTools,
-          headless: false,
+          headless: true,  // ✅ No separate window, streams to UI
           max_steps: 40
         }),
       })
@@ -173,16 +215,64 @@ export default function ForgePlatform() {
             if (eventData.type === 'event') {
               const event = eventData.event
 
+              // Capture ALL events for live streaming logs
+              setStreamingLogs(prev => [...prev, event])
+
               // Handle screenshot updates
               if (event.payload?.type === 'screenshot') {
+                console.log('📸 Screenshot received:', {
+                  url: event.payload.url,
+                  imageLength: event.payload.image?.length,
+                  step: event.payload.step
+                })
                 setCurrentScreenshot(event.payload.image)
-                setCurrentUrl(event.payload.url)
+                setCurrentUrl(event.payload.url || '')
+                setShowBrowserView(true)
+                setActiveView('browser')
 
                 // Update step status
                 setExecutionSteps(prev => prev.map((step, idx) =>
                   idx === 2 ? { ...step, status: 'in-progress', timestamp: new Date() } :
                   idx < 2 ? { ...step, status: 'completed', timestamp: new Date() } : step
                 ))
+              }
+
+              // Capture thinking/reasoning
+              if (event.payload?.type === 'thinking') {
+                setAgentThinking(event.payload.reason || '')
+                setAgentPlan(prev => [...prev, {
+                  action: event.payload.action,
+                  details: event.payload.details,
+                  timestamp: new Date()
+                }])
+              }
+
+              // Handle terminal output
+              if (event.payload?.type === 'terminal') {
+                setTerminalOutput(prev => [...prev, {
+                  command: event.payload.command,
+                  output: event.payload.output,
+                  error: event.payload.error,
+                  timestamp: new Date()
+                }])
+                setActiveView('terminal')
+              }
+
+              // Handle code execution
+              if (event.payload?.type === 'code') {
+                setCodeOutput(prev => [...prev, {
+                  code: event.payload.code,
+                  output: event.payload.output,
+                  error: event.payload.error,
+                  timestamp: new Date()
+                }])
+                setActiveView('code')
+              }
+
+              // Handle analytics
+              if (event.payload?.type === 'analytics') {
+                setAnalyticsData(event.payload.analysis)
+                setActiveView('analytics')
               }
 
               console.log('📡 Event:', event.message)
@@ -1047,26 +1137,6 @@ export default function ForgePlatform() {
           display: 'flex',
           gap: '8px'
         }}>
-          <button
-            onClick={() => setShowArtifact(!showArtifact)}
-            style={{
-              padding: '6px 12px',
-              background: showArtifact ? 'rgba(255, 138, 0, 0.15)' : '#0d0d0d',
-              border: `1px solid ${showArtifact ? 'rgba(255, 138, 0, 0.3)' : '#222222'}`,
-              borderRadius: '6px',
-              color: showArtifact ? '#ff8a00' : '#cccccc',
-              cursor: 'pointer',
-              fontSize: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontWeight: '500'
-            }}
-          >
-            <Eye size={12} />
-            Preview
-          </button>
-
           <button 
             onClick={() => {
               setIsActive(false)
@@ -1095,195 +1165,147 @@ export default function ForgePlatform() {
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* Main Content - 3 Panel Layout */}
       <div style={{
         flex: 1,
         display: 'flex',
         overflow: 'hidden'
       }}>
-        {/* Left - Timeline (20%) */}
+        {/* LEFT PANEL - Agent Thinking (20%) */}
         <div style={{
           width: '280px',
-          background: 'linear-gradient(180deg, #0d0d0d 0%, #0a0a0a 100%)',
+          background: '#0d0d0d',
           borderRight: '1px solid #1a1a1a',
-          padding: '24px',
-          overflowY: 'auto'
+          padding: '20px',
+          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '16px'
         }}>
-          <div style={{
-            fontSize: '10px',
-            color: '#666666',
-            marginBottom: '8px',
-            textTransform: 'uppercase',
-            letterSpacing: '1px',
-            fontWeight: '600'
-          }}>
-            Task
-          </div>
-          <div style={{
-            fontSize: '12px',
-            color: '#999999',
-            marginBottom: '24px',
-            lineHeight: '1.4'
-          }}>
-            {task.substring(0, 80)}{task.length > 80 ? '...' : ''}
-          </div>
-
-          {/* Error Display */}
-          {error && (
-            <div style={{
-              padding: '12px',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              borderRadius: '6px',
-              marginBottom: '24px'
-            }}>
-              <div style={{
-                fontSize: '10px',
-                color: '#ef4444',
-                fontWeight: '600',
-                marginBottom: '4px',
-                textTransform: 'uppercase'
-              }}>
-                Error
-              </div>
-              <div style={{
-                fontSize: '11px',
-                color: '#fca5a5',
-                lineHeight: '1.4'
-              }}>
-                {error}
-              </div>
-            </div>
-          )}
-
-          {/* Execution Steps */}
-          <div style={{
-            fontSize: '10px',
-            color: '#666666',
-            marginBottom: '12px',
-            textTransform: 'uppercase',
-            letterSpacing: '0.5px',
-            fontWeight: '600'
-          }}>
-            Execution Timeline
-          </div>
-
-          {executionSteps.map((step) => (
-            <div
-              key={step.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                marginBottom: '18px',
-                opacity: step.status === 'pending' ? 0.3 : 1,
-                transition: 'opacity 0.3s'
-              }}
-            >
-              {getStepIcon(step.status)}
-              <div style={{
-                fontSize: '13px',
-                color: step.status === 'pending' ? '#444444' : '#ffffff',
-                fontWeight: step.status === 'in-progress' ? '600' : '400'
-              }}>
-                {step.action}
-              </div>
-            </div>
-          ))}
-
-          {/* Result Summary */}
-          {taskResult && (
-            <div style={{
-              marginTop: '32px',
-              paddingTop: '20px',
-              borderTop: '1px solid rgba(255, 138, 0, 0.1)'
-            }}>
-              <div style={{
-                fontSize: '10px',
-                color: '#666666',
-                marginBottom: '10px',
-                textTransform: 'uppercase',
-                letterSpacing: '0.5px',
-                fontWeight: '600'
-              }}>
-                Result
-              </div>
-              <div style={{
-                padding: '12px',
-                background: 'rgba(255, 138, 0, 0.1)',
-                border: '1px solid rgba(255, 138, 0, 0.2)',
-                borderRadius: '6px'
-              }}>
-                <div style={{
-                  fontSize: '11px',
-                  color: '#ff8a00',
-                  marginBottom: '4px',
-                  fontWeight: '600'
-                }}>
-                  Status: {taskResult.status}
-                </div>
-                <div style={{
-                  fontSize: '11px',
-                  color: '#cccccc',
-                  lineHeight: '1.4'
-                }}>
-                  Mode: {taskResult.mode}
-                  <br />
-                  Summary: {taskResult.progress_summary || 'No progress summary available'}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Active Tools */}
-          <div style={{
-            marginTop: '32px',
-            paddingTop: '20px',
-            borderTop: '1px solid rgba(255, 138, 0, 0.1)'
-          }}>
+          {/* Task */}
+          <div>
             <div style={{
               fontSize: '10px',
-              color: '#666666',
-              marginBottom: '10px',
+              color: '#666',
+              marginBottom: '8px',
               textTransform: 'uppercase',
-              letterSpacing: '0.5px',
+              letterSpacing: '1px',
               fontWeight: '600'
             }}>
-              Active Tools
+              Task
             </div>
             <div style={{
-              display: 'flex',
-              gap: '6px',
-              flexWrap: 'wrap'
+              fontSize: '13px',
+              color: '#ccc',
+              lineHeight: '1.5'
             }}>
-              {activeTools.map(toolId => {
-                const tool = tools.find(t => t.id === toolId)
-                return (
-                  <div
-                    key={toolId}
-                    style={{
-                      padding: '5px 10px',
-                      background: 'rgba(255, 138, 0, 0.1)',
-                      border: '1px solid rgba(255, 138, 0, 0.2)',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      color: '#ff8a00',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontWeight: '500'
-                    }}
-                  >
-                    <tool.icon size={9} />
-                    {tool.label}
-                  </div>
-                )
-              })}
+              {task}
             </div>
+          </div>
+
+          {/* Current Thinking */}
+          {agentThinking && (
+            <div style={{
+              padding: '12px',
+              background: 'rgba(255, 138, 0, 0.05)',
+              borderLeft: '3px solid #ff8a00',
+              borderRadius: '4px'
+            }}>
+              <div style={{
+                fontSize: '10px',
+                color: '#ff8a00',
+                marginBottom: '8px',
+                fontWeight: '600'
+              }}>
+                💭 REASONING
+              </div>
+              <div style={{
+                fontSize: '12px',
+                color: '#ccc',
+                lineHeight: '1.6',
+                fontStyle: 'italic'
+              }}>
+                {agentThinking}
+              </div>
+            </div>
+          )}
+
+          {/* Plan Steps */}
+          <div>
+            <div style={{
+              fontSize: '10px',
+              color: '#666',
+              marginBottom: '12px',
+              textTransform: 'uppercase',
+              letterSpacing: '1px',
+              fontWeight: '600'
+            }}>
+              Execution Plan
+            </div>
+            {agentPlan.slice(-5).map((step, idx) => (
+              <div key={idx} style={{
+                fontSize: '12px',
+                color: '#ccc',
+                marginBottom: '12px',
+                paddingLeft: '24px',
+                position: 'relative',
+                paddingBottom: '12px',
+                borderBottom: idx < agentPlan.slice(-5).length - 1 ? '1px solid #1a1a1a' : 'none'
+              }}>
+                <div style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: '2px',
+                  width: '16px',
+                  height: '16px',
+                  borderRadius: '4px',
+                  background: idx === agentPlan.slice(-5).length - 1 ? '#ff8a00' : '#22c55e',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '10px',
+                  fontWeight: '700',
+                  color: '#000'
+                }}>
+                  {idx === agentPlan.slice(-5).length - 1 ? '⋯' : '✓'}
+                </div>
+                <div style={{
+                  fontWeight: '600',
+                  marginBottom: '4px',
+                  color: '#fff',
+                  textTransform: 'uppercase',
+                  fontSize: '11px',
+                  letterSpacing: '0.5px'
+                }}>
+                  {step.action}
+                </div>
+                <div style={{
+                  fontSize: '11px',
+                  color: '#888',
+                  lineHeight: '1.4'
+                }}>
+                  {step.details}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Status */}
+          <div style={{
+            marginTop: 'auto',
+            padding: '12px',
+            background: 'rgba(255, 138, 0, 0.1)',
+            borderRadius: '6px',
+            fontSize: '11px',
+            color: '#ff8a00',
+            textAlign: 'center',
+            fontWeight: '500'
+          }}>
+            {isActive ? '🔄 Agent Running' : error ? '❌ Error' : '✅ Complete'}
           </div>
         </div>
 
-        {/* Center - Live View (80%) */}
+        {/* CENTER PANEL - Browser View (60%) */}
         <div style={{
           flex: 1,
           background: '#000000',
@@ -1291,470 +1313,131 @@ export default function ForgePlatform() {
           alignItems: 'center',
           justifyContent: 'center',
           position: 'relative',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          padding: '20px'
         }}>
-          {/* Browser View - Show screenshot when available */}
-          {currentScreenshot && showBrowserView && (
+          {currentScreenshot ? (
+            <img
+              src={`data:image/png;base64,${currentScreenshot}`}
+              alt="Browser view"
+              style={{
+                maxWidth: '100%',
+                maxHeight: '100%',
+                height: 'auto',
+                borderRadius: '8px',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+                border: '1px solid #1a1a1a'
+              }}
+            />
+          ) : (
             <div style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              background: '#0a0a0a'
+              textAlign: 'center',
+              color: '#666'
             }}>
-              {/* Browser URL Bar */}
-              <div style={{
-                padding: '12px 20px',
-                background: '#0d0d0d',
-                borderBottom: '1px solid #1a1a1a',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px'
-              }}>
-                <Globe size={14} color="#666666" />
-                <div style={{
-                  flex: 1,
-                  padding: '8px 14px',
-                  background: '#000000',
-                  border: '1px solid #222222',
-                  borderRadius: '6px',
-                  fontSize: '12px',
-                  color: '#888888',
-                  fontFamily: 'monospace',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap'
-                }}>
-                  {currentUrl || 'Loading...'}
-                </div>
-                <button
-                  onClick={handleTakeControl}
-                  style={{
-                    padding: '6px 12px',
-                    background: manualControl ? 'rgba(147, 51, 234, 0.2)' : 'transparent',
-                    border: `1px solid ${manualControl ? '#9333ea' : '#222222'}`,
-                    borderRadius: '4px',
-                    color: manualControl ? '#a855f7' : '#888888',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '11px',
-                    fontWeight: '500',
-                    transition: 'all 0.2s'
-                  }}
-                >
-                  <Hammer size={14} />
-                  {manualControl ? 'Release' : 'Take Control'}
-                </button>
-                <button
-                  onClick={() => setShowBrowserView(false)}
-                  style={{
-                    padding: '6px',
-                    background: 'transparent',
-                    border: '1px solid #222222',
-                    borderRadius: '4px',
-                    color: '#888888',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}
-                >
-                  <Eye size={14} />
-                </button>
-              </div>
-
-              {/* Screenshot Display */}
-              <div style={{
-                flex: 1,
-                overflow: 'auto',
-                display: 'flex',
-                alignItems: 'flex-start',
-                justifyContent: 'center',
-                padding: '20px',
-                background: '#000000'
-              }}>
-                <img
-                  src={`data:image/png;base64,${currentScreenshot}`}
-                  alt="Browser view"
-                  style={{
-                    maxWidth: '100%',
-                    height: 'auto',
-                    borderRadius: '8px',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                    border: '1px solid #1a1a1a'
-                  }}
-                />
-              </div>
-
-              {/* Live Indicator */}
-              <div style={{
-                position: 'absolute',
-                top: '20px',
-                right: '20px',
-                padding: '6px 12px',
-                background: 'rgba(239, 68, 68, 0.9)',
-                borderRadius: '20px',
-                fontSize: '10px',
-                color: '#ffffff',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
-              }}>
-                <div style={{
-                  width: '6px',
-                  height: '6px',
-                  background: '#ffffff',
-                  borderRadius: '50%',
-                  animation: 'pulse 2s ease-in-out infinite'
-                }} />
-                LIVE
-              </div>
-
-              {/* Manual Control Overlay */}
-              {manualControl && (
-                <div style={{
-                  position: 'absolute',
-                  inset: 0,
-                  background: 'rgba(0, 0, 0, 0.8)',
-                  backdropFilter: 'blur(8px)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 100
-                }}>
+              {error ? (
+                <>
+                  <div style={{ fontSize: '48px', marginBottom: '16px' }}>❌</div>
+                  <div style={{ fontSize: '16px', color: '#ef4444' }}>Task Failed</div>
+                  <div style={{ fontSize: '13px', color: '#888', marginTop: '8px' }}>{error}</div>
+                </>
+              ) : isActive ? (
+                <>
                   <div style={{
-                    background: '#0d0d0d',
-                    border: '1px solid #9333ea',
-                    borderRadius: '12px',
-                    padding: '32px',
-                    maxWidth: '500px',
-                    width: '90%',
-                    boxShadow: '0 20px 60px rgba(147, 51, 234, 0.3)'
-                  }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      marginBottom: '24px'
-                    }}>
-                      <Hammer size={20} color="#a855f7" />
-                      <h3 style={{
-                        margin: 0,
-                        fontSize: '18px',
-                        color: '#ffffff',
-                        fontWeight: '600'
-                      }}>Manual Control Mode</h3>
-                    </div>
-
-                    <p style={{
-                      color: '#888888',
-                      fontSize: '13px',
-                      marginBottom: '20px',
-                      lineHeight: '1.6'
-                    }}>
-                      Agent execution is paused. Navigate the browser manually or resume automation.
-                    </p>
-
-                    <div style={{ marginBottom: '20px' }}>
-                      <label style={{
-                        display: 'block',
-                        color: '#aaaaaa',
-                        fontSize: '12px',
-                        marginBottom: '8px',
-                        fontWeight: '500'
-                      }}>
-                        Navigate to URL:
-                      </label>
-                      <form onSubmit={(e) => {
-                        e.preventDefault()
-                        const url = e.target.manualUrl.value
-                        if (url) {
-                          handleNavigate(url)
-                          e.target.manualUrl.value = ''
-                        }
-                      }}>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <input
-                            type="text"
-                            name="manualUrl"
-                            placeholder="https://example.com"
-                            style={{
-                              flex: 1,
-                              padding: '10px 14px',
-                              background: '#000000',
-                              border: '1px solid #222222',
-                              borderRadius: '6px',
-                              color: '#ffffff',
-                              fontSize: '13px',
-                              outline: 'none'
-                            }}
-                            onFocus={(e) => e.target.style.borderColor = '#9333ea'}
-                            onBlur={(e) => e.target.style.borderColor = '#222222'}
-                          />
-                          <button
-                            type="submit"
-                            style={{
-                              padding: '10px 20px',
-                              background: '#9333ea',
-                              border: 'none',
-                              borderRadius: '6px',
-                              color: '#ffffff',
-                              fontSize: '13px',
-                              fontWeight: '500',
-                              cursor: 'pointer',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            Go
-                          </button>
-                        </div>
-                      </form>
-                    </div>
-
-                    <div style={{
-                      display: 'flex',
-                      gap: '12px',
-                      marginTop: '24px'
-                    }}>
-                      <button
-                        onClick={handleTakeControl}
-                        style={{
-                          flex: 1,
-                          padding: '12px',
-                          background: '#9333ea',
-                          border: 'none',
-                          borderRadius: '6px',
-                          color: '#ffffff',
-                          fontSize: '13px',
-                          fontWeight: '600',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Resume Automation
-                      </button>
-                      <button
-                        onClick={() => {
-                          setManualControl(false)
-                          setIsPaused(false)
-                          setIsActive(false)
-                        }}
-                        style={{
-                          padding: '12px 20px',
-                          background: 'transparent',
-                          border: '1px solid #222222',
-                          borderRadius: '6px',
-                          color: '#888888',
-                          fontSize: '13px',
-                          fontWeight: '500',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Stop
-                      </button>
-                    </div>
+                    width: '60px',
+                    height: '60px',
+                    margin: '0 auto 24px',
+                    border: '3px solid #1a1a1a',
+                    borderTopColor: '#ff8a00',
+                    borderRadius: '50%',
+                    animation: 'spin 1.5s linear infinite'
+                  }} />
+                  <div style={{ fontSize: '16px', color: '#fff', marginBottom: '8px' }}>
+                    Waiting for browser...
                   </div>
-                </div>
+                </>
+              ) : (
+                <div style={{ fontSize: '16px', color: '#666' }}>No browser view</div>
               )}
             </div>
           )}
 
-          {/* Animated glow */}
-          {!currentScreenshot && (
+          {/* URL Badge */}
+          {currentUrl && currentUrl !== 'about:blank' && (
             <div style={{
               position: 'absolute',
-              inset: 0,
-              background: error
-                ? 'radial-gradient(circle at center, rgba(239, 68, 68, 0.05) 0%, transparent 70%)'
-                : taskResult
-                ? 'radial-gradient(circle at center, rgba(34, 197, 94, 0.05) 0%, transparent 70%)'
-                : 'radial-gradient(circle at center, rgba(255, 138, 0, 0.05) 0%, transparent 70%)',
-              animation: error || taskResult ? 'none' : 'glow 3s ease-in-out infinite'
-            }} />
-          )}
-
-          {!currentScreenshot && (
-            <div style={{
-              textAlign: 'center',
-              position: 'relative',
-              zIndex: 1
+              top: '20px',
+              left: '20px',
+              right: '20px',
+              padding: '8px 16px',
+              background: 'rgba(0, 0, 0, 0.8)',
+              backdropFilter: 'blur(10px)',
+              borderRadius: '8px',
+              fontSize: '12px',
+              color: '#888',
+              fontFamily: 'monospace',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              border: '1px solid #1a1a1a'
             }}>
-              {!error && !taskResult && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  border: '3px solid #1a1a1a',
-                  borderTopColor: '#ff8a00',
-                  borderRadius: '50%',
-                  animation: 'spin 1.5s linear infinite',
-                  boxShadow: '0 0 20px rgba(255, 138, 0, 0.3)'
-                }} />
-                <div style={{
-                  fontSize: '16px',
-                  color: '#ffffff',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  {currentStep ? currentStep.action : 'Processing...'}
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888'
-                }}>
-                  Step {executionSteps.filter(s => s.status === 'completed').length + 1} of {executionSteps.length}
-                </div>
-              </>
-            )}
-
-            {error && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  background: 'rgba(239, 68, 68, 0.1)',
-                  border: '3px solid rgba(239, 68, 68, 0.3)',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '24px'
-                }}>
-                  ✗
-                </div>
-                <div style={{
-                  fontSize: '16px',
-                  color: '#ef4444',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  Task Failed
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888',
-                  maxWidth: '400px'
-                }}>
-                  {error}
-                </div>
-              </>
-            )}
-
-            {taskResult && (
-              <>
-                <div style={{
-                  width: '60px',
-                  height: '60px',
-                  margin: '0 auto 24px',
-                  background: 'rgba(34, 197, 94, 0.1)',
-                  border: '3px solid rgba(34, 197, 94, 0.3)',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '24px',
-                  color: '#22c55e'
-                }}>
-                  ✓
-                </div>
-                <div style={{
-                  fontSize: '16px',
-                  color: '#22c55e',
-                  marginBottom: '8px',
-                  fontWeight: '600'
-                }}>
-                  Task Completed
-                </div>
-                <div style={{
-                  fontSize: '13px',
-                  color: '#888888'
-                }}>
-                  {taskResult.message}
-                  <br />
-                  Session: {taskResult.session_id}
-                </div>
-              </>
-            )}
+              🌐 {currentUrl}
             </div>
           )}
         </div>
 
-        {/* Right - Artifact Preview (Optional) */}
+        {/* RIGHT PANEL - Live Logs (20%) */}
         {showArtifact && (
           <div style={{
-            width: '400px',
-            background: 'linear-gradient(180deg, #0d0d0d 0%, #0a0a0a 100%)',
-            borderLeft: '1px solid rgba(255, 138, 0, 0.2)',
+            width: '300px',
+            background: '#0d0d0d',
+            borderLeft: '1px solid #1a1a1a',
             display: 'flex',
             flexDirection: 'column',
-            animation: 'slideIn 0.3s ease'
+            overflow: 'hidden'
           }}>
             <div style={{
-              padding: '16px 20px',
-              borderBottom: '1px solid rgba(255, 138, 0, 0.1)',
+              padding: '16px',
+              borderBottom: '1px solid #1a1a1a',
+              fontSize: '12px',
+              fontWeight: '600',
+              color: '#ffffff',
               display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center'
+              alignItems: 'center',
+              gap: '8px'
             }}>
               <div style={{
-                fontSize: '13px',
-                fontWeight: '700',
-                color: '#ffffff',
-                letterSpacing: '0.5px'
-              }}>
-                Live Output
-              </div>
-              <button
-                onClick={() => setShowArtifact(false)}
-                style={{
-                  padding: '4px 8px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#666666',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  transition: 'color 0.2s'
-                }}
-                onMouseEnter={(e) => e.target.style.color = '#ff8a00'}
-                onMouseLeave={(e) => e.target.style.color = '#666666'}
-              >
-                ×
-              </button>
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: isActive ? '#22c55e' : '#666',
+                animation: isActive ? 'pulse 2s ease-in-out infinite' : 'none'
+              }} />
+              Live Output
             </div>
             <div style={{
               flex: 1,
-              padding: '20px',
               overflowY: 'auto',
+              padding: '12px',
               fontFamily: 'monospace',
-              fontSize: '12px',
-              color: '#888888',
-              lineHeight: '1.6'
+              fontSize: '11px',
+              lineHeight: '1.5'
             }}>
-              {taskResult ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div>
-                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Progress Logs</div>
-                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
-                      {(taskResult.logs || []).map((event, idx) => `${idx + 1}. [${event.level?.toUpperCase() || 'INFO'}] ${event.message}`).join('\n') || 'No logs captured.'}
-                    </pre>
+              {streamingLogs.length > 0 ? (
+                streamingLogs.map((log, idx) => (
+                  <div key={idx} style={{
+                    color: log.level === 'error' ? '#ef4444' : '#888',
+                    marginBottom: '6px',
+                    paddingBottom: '6px',
+                    borderBottom: '1px solid rgba(255, 138, 0, 0.05)'
+                  }}>
+                    <span style={{ color: '#666', marginRight: '6px' }}>
+                      [{log.level?.toUpperCase() || 'INFO'}]
+                    </span>
+                    {log.message?.substring(0, 100)}
                   </div>
-                  <div>
-                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Collected Data</div>
-                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
-                      {taskResult.data && taskResult.data.length > 0
-                        ? JSON.stringify(taskResult.data, null, 2)
-                        : 'No structured data captured.'}
-                    </pre>
-                  </div>
-                </div>
+                ))
               ) : (
-                <div style={{ color: '#666666' }}>
-                  Waiting for output...
-                </div>
+                <div style={{ color: '#666' }}>Starting...</div>
               )}
             </div>
           </div>
@@ -1767,6 +1450,10 @@ export default function ForgePlatform() {
         }
         @keyframes glow {
           0%, 100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; }
           50% { opacity: 1; }
         }
         @keyframes slideIn {
