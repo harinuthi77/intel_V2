@@ -343,9 +343,7 @@ export default function ForgePlatform() {
         {/* Right Panel - Canvas */}
         <div style={{
           flex: 1,
-          display: 'flex',
           position: 'relative',
-          padding: '12px',
           minHeight: 0,
           minWidth: 0,
           overflow: 'hidden'
@@ -408,10 +406,13 @@ export default function ForgePlatform() {
                 width={1920}
                 height={1080}
                 style={{
-                  flex: 1,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
+                  position: 'absolute',
+                  top: '12px',
+                  left: '12px',
+                  right: '12px',
+                  bottom: '12px',
+                  width: 'calc(100% - 24px)',
+                  height: 'calc(100% - 24px)',
                   backgroundColor: '#1a1a1a',
                   borderRadius: '8px',
                   boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
