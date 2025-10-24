@@ -11,7 +11,7 @@ export default function ForgePlatform() {
   const [task, setTask] = useState('')
   const [isActive, setIsActive] = useState(false)
   const [model, setModel] = useState('claude')
-  const [showArtifact, setShowArtifact] = useState(false)
+  const [showArtifact, setShowArtifact] = useState(true)  // Changed to true - always show Live Output
   const [isPaused, setIsPaused] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -29,6 +29,7 @@ export default function ForgePlatform() {
   const [terminalOutput, setTerminalOutput] = useState([])
   const [codeOutput, setCodeOutput] = useState([])
   const [analyticsData, setAnalyticsData] = useState(null)
+  const [streamingLogs, setStreamingLogs] = useState([])  // NEW: For real-time log streaming
   const [sidebarWidth, setSidebarWidth] = useState(280)
   const [isResizing, setIsResizing] = useState(false)
   const textareaRef = useRef(null)
@@ -154,6 +155,7 @@ export default function ForgePlatform() {
     setTaskResult(null)
     setCurrentScreenshot(null)
     setCurrentUrl('')
+    setStreamingLogs([])  // Reset streaming logs for new execution
 
     // Initialize execution steps
     const initialSteps = [
@@ -210,6 +212,9 @@ export default function ForgePlatform() {
 
             if (eventData.type === 'event') {
               const event = eventData.event
+
+              // Capture ALL events for live streaming logs
+              setStreamingLogs(prev => [...prev, event])
 
               // Handle screenshot updates
               if (event.payload?.type === 'screenshot') {
@@ -1120,26 +1125,6 @@ export default function ForgePlatform() {
           display: 'flex',
           gap: '8px'
         }}>
-          <button
-            onClick={() => setShowArtifact(!showArtifact)}
-            style={{
-              padding: '6px 12px',
-              background: showArtifact ? 'rgba(255, 138, 0, 0.15)' : '#0d0d0d',
-              border: `1px solid ${showArtifact ? 'rgba(255, 138, 0, 0.3)' : '#222222'}`,
-              borderRadius: '6px',
-              color: showArtifact ? '#ff8a00' : '#cccccc',
-              cursor: 'pointer',
-              fontSize: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontWeight: '500'
-            }}
-          >
-            <Eye size={12} />
-            Preview
-          </button>
-
           <button 
             onClick={() => {
               setIsActive(false)
@@ -1914,52 +1899,36 @@ export default function ForgePlatform() {
               }}>
                 Live Output
               </div>
-              <button
-                onClick={() => setShowArtifact(false)}
-                style={{
-                  padding: '4px 8px',
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#666666',
-                  cursor: 'pointer',
-                  fontSize: '18px',
-                  transition: 'color 0.2s'
-                }}
-                onMouseEnter={(e) => e.target.style.color = '#ff8a00'}
-                onMouseLeave={(e) => e.target.style.color = '#666666'}
-              >
-                ×
-              </button>
             </div>
             <div style={{
               flex: 1,
               padding: '20px',
               overflowY: 'auto',
               fontFamily: 'monospace',
-              fontSize: '12px',
+              fontSize: '11px',
               color: '#888888',
               lineHeight: '1.6'
             }}>
-              {taskResult ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div>
-                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Progress Logs</div>
-                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
-                      {(taskResult.logs || []).map((event, idx) => `${idx + 1}. [${event.level?.toUpperCase() || 'INFO'}] ${event.message}`).join('\n') || 'No logs captured.'}
-                    </pre>
-                  </div>
-                  <div>
-                    <div style={{ color: '#ff8a00', fontWeight: '600', marginBottom: '6px' }}>Collected Data</div>
-                    <pre style={{ color: '#cccccc', whiteSpace: 'pre-wrap' }}>
-                      {taskResult.data && taskResult.data.length > 0
-                        ? JSON.stringify(taskResult.data, null, 2)
-                        : 'No structured data captured.'}
-                    </pre>
-                  </div>
+              {streamingLogs.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {streamingLogs.map((log, idx) => (
+                    <div key={idx} style={{
+                      fontSize: '11px',
+                      color: log.level === 'error' ? '#ef4444' : '#cccccc',
+                      fontFamily: 'monospace',
+                      padding: '4px 0',
+                      borderBottom: '1px solid #1a1a1a'
+                    }}>
+                      <span style={{ color: '#666', marginRight: '8px' }}>
+                        [{log.level?.toUpperCase() || 'INFO'}]
+                      </span>
+                      {log.message}
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div style={{ color: '#666666' }}>
-                  Waiting for output...
+                  {isActive ? 'Starting execution...' : 'Waiting for task...'}
                 </div>
               )}
             </div>
