@@ -927,20 +927,21 @@ def run_adaptive_agent(
         task_type = "search" if "search" in task.lower() or "find" in task.lower() else "navigate"
 
         print("🌐 Initializing Playwright...")
-        with sync_playwright() as p:
-            browser = None
-            context = None
-            page = None
-            try:
-                print(f"🚀 Launching Chromium (headless={config.headless})...")
-                browser = p.chromium.launch(
-                    headless=config.headless,
-                    args=[
-                        '--disable-blink-features=AutomationControlled',
-                        '--force-device-scale-factor=1',  # Stable viewport - no zoom
-                    ]
-                )
-                print("✅ Browser launched successfully")
+        try:
+            with sync_playwright() as p:
+                browser = None
+                context = None
+                page = None
+                try:
+                    print(f"🚀 Launching Chromium (headless={config.headless})...")
+                    browser = p.chromium.launch(
+                        headless=config.headless,
+                        args=[
+                            '--disable-blink-features=AutomationControlled',
+                            '--force-device-scale-factor=1',  # Stable viewport - no zoom
+                        ]
+                    )
+                    print("✅ Browser launched successfully")
 
                 print("📱 Creating browser context (1280x720)...")
                 context = browser.new_context(
@@ -1686,12 +1687,34 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                     except Exception:
                         pass
 
+        except Exception as playwright_error:
+            print(f"\n{'='*70}")
+            print(f"❌ PLAYWRIGHT INITIALIZATION ERROR")
+            print(f"{'='*70}")
+            print(f"Error: {playwright_error}")
+            print(f"Type: {type(playwright_error).__name__}")
+            import traceback
+            print(f"\nTraceback:")
+            traceback.print_exc()
+            print(f"{'='*70}\n")
+            errors.append(f"Playwright error: {str(playwright_error)}")
+            raise  # Re-raise to be caught by outer exception handler
+
         print(f"\n💾 Learning data saved to: agent_learning.db")
         print(f"📊 Session: {session_id}")
 
     except Exception as exc:  # pragma: no cover - defensive
         error_message = str(exc)
         errors.append(error_message)
+        print(f"\n{'='*70}")
+        print(f"❌ FATAL ERROR IN AGENT EXECUTION")
+        print(f"{'='*70}")
+        print(f"Error: {error_message}")
+        print(f"Type: {type(exc).__name__}")
+        import traceback
+        print(f"\nTraceback:")
+        traceback.print_exc()
+        print(f"{'='*70}\n")
         _emit(f"Unhandled agent error: {error_message}", level="error")
     finally:
         builtins.print = original_print

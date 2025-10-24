@@ -192,6 +192,9 @@ async def execute_stream(request: ExecuteRequest):
     try:
         await close_live_browser()
         logger.info("✅ LiveBrowserManager closed successfully")
+        # Wait for browser to fully close before starting agent
+        await asyncio.sleep(2)
+        logger.info("⏱️  Waited 2s for browser cleanup")
     except Exception as e:
         logger.warning(f"⚠️  LiveBrowserManager close failed (may not be running): {e}")
 
