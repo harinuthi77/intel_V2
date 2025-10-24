@@ -22,6 +22,8 @@ import logging
 from typing import Any, Dict, List
 from queue import Queue
 from datetime import datetime
+from collections import defaultdict
+from threading import Lock
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,11 +37,11 @@ from live_browser_manager import get_live_browser, close_live_browser
 # Global browser session management
 active_sessions = {}
 connected_websocket_clients = []
-control_websocket_clients = {}  # session_id -> WebSocket
 
-# Agent control state (thread-safe flags for each session)
-import threading
-agent_control_state = {}  # session_id -> {"paused": bool, "stop_requested": bool, "nudges": [str], "lock": Lock}
+# Control state globals (thread-safe)
+CONTROL_STATE = defaultdict(lambda: {"paused": False, "stopped": False, "nudge": None})
+CONTROL_LOCK = Lock()
+CONTROL_CLIENTS = defaultdict(set)  # session_id -> set(WebSocket)
 
 logger = logging.getLogger("adaptive_agent.backend")
 logging.basicConfig(level=logging.INFO)
@@ -189,22 +191,20 @@ async def execute(request: ExecuteRequest) -> Dict[str, Any]:
         "created_at": datetime.now().isoformat()
     }
 
-    # Initialize control state for this session
-    agent_control_state[session_id] = {
-        "paused": False,
-        "stop_requested": False,
-        "nudges": [],
-        "lock": threading.Lock()
-    }
+    # Create stream callback for browser frames
+    def stream_callback(frame_b64: str, url: str):
+        """Thread-safe callback for browser frame streaming."""
+        send_browser_frame(session_id, frame_b64, url)
 
-    # Create config with control state
+    # Create config with control state (defaultdict auto-creates entry)
     config = AgentConfig(
         task=request.task,
         model=request.model,
         tools=request.tools,
         max_steps=request.max_steps,
         headless=request.headless,
-        control_state=agent_control_state[session_id]
+        control_state=CONTROL_STATE[session_id],
+        stream_callback=stream_callback
     )
 
     def sync_progress_callback(event: Dict[str, Any]):
@@ -536,130 +536,58 @@ async def websocket_control_channel(websocket: WebSocket):
     - {"type":"nudge", "text":"Use the first result"}
     """
     await websocket.accept()
-
-    # Extract session_id from query params
     session_id = websocket.query_params.get("session_id", "unknown")
-    client_id = f"{websocket.client.host}:{websocket.client.port}"
 
-    logger.info(f"🔵 Control WS connected: {client_id} (session: {session_id})")
+    logger.info(f"🔵 Control WS connected (session: {session_id})")
 
-    # Store connection
-    control_websocket_clients[session_id] = websocket
+    # Store in CONTROL_CLIENTS set
+    CONTROL_CLIENTS[session_id].add(websocket)
 
     try:
-        # Send initial connection confirmation
-        await websocket.send_json({
-            'type': 'status',
-            'phase': 'IDLE',
-            'message': 'Control channel connected'
-        })
-
-        # Listen for commands from client
         while True:
-            try:
-                message = await asyncio.wait_for(websocket.receive_json(), timeout=30.0)
+            msg = await websocket.receive_json()
+            cmd = msg.get("type")
 
-                command_type = message.get('type')
-                logger.info(f"🎮 Control command from {client_id}: {command_type}")
+            logger.info(f"🎮 Control command: {cmd} (session: {session_id})")
 
-                # Handle control commands
-                if command_type == 'pause':
-                    logger.info(f"⏸️  Pause requested for session {session_id}")
-                    if session_id in agent_control_state:
-                        with agent_control_state[session_id]["lock"]:
-                            agent_control_state[session_id]["paused"] = True
-                        await send_control_event(session_id, {
-                            'type': 'status',
-                            'phase': 'PAUSED'
-                        })
-                    await websocket.send_json({
-                        'type': 'command_ack',
-                        'command': 'pause',
-                        'status': 'acknowledged'
-                    })
+            # Update control state
+            with CONTROL_LOCK:
+                if cmd == "pause":
+                    CONTROL_STATE[session_id]["paused"] = True
+                elif cmd == "resume":
+                    CONTROL_STATE[session_id]["paused"] = False
+                elif cmd == "stop":
+                    CONTROL_STATE[session_id]["stopped"] = True
+                elif cmd == "nudge":
+                    CONTROL_STATE[session_id]["nudge"] = msg.get("text")
+                elif cmd == "ping":
+                    # Just ack, no state change
+                    pass
 
-                elif command_type == 'resume':
-                    logger.info(f"▶️  Resume requested for session {session_id}")
-                    if session_id in agent_control_state:
-                        with agent_control_state[session_id]["lock"]:
-                            agent_control_state[session_id]["paused"] = False
-                        await send_control_event(session_id, {
-                            'type': 'status',
-                            'phase': 'RUNNING'
-                        })
-                    await websocket.send_json({
-                        'type': 'command_ack',
-                        'command': 'resume',
-                        'status': 'acknowledged'
-                    })
-
-                elif command_type == 'stop':
-                    logger.info(f"⏹️  Stop requested for session {session_id}")
-                    if session_id in agent_control_state:
-                        with agent_control_state[session_id]["lock"]:
-                            agent_control_state[session_id]["stop_requested"] = True
-                    await websocket.send_json({
-                        'type': 'command_ack',
-                        'command': 'stop',
-                        'status': 'acknowledged'
-                    })
-
-                elif command_type == 'nudge':
-                    text = message.get('text', '')
-                    logger.info(f"💡 Nudge received for session {session_id}: {text}")
-                    if session_id in agent_control_state:
-                        with agent_control_state[session_id]["lock"]:
-                            agent_control_state[session_id]["nudges"].append(text)
-                    await websocket.send_json({
-                        'type': 'command_ack',
-                        'command': 'nudge',
-                        'status': 'acknowledged',
-                        'text': text
-                    })
-
-                elif command_type == 'ping':
-                    # Heartbeat/keepalive
-                    await websocket.send_json({
-                        'type': 'pong',
-                        'timestamp': datetime.now().isoformat()
-                    })
-
-                else:
-                    logger.warning(f"⚠️  Unknown control command: {command_type}")
-
-            except asyncio.TimeoutError:
-                # Send keepalive ping
-                try:
-                    await websocket.send_json({'type': 'ping'})
-                except:
-                    break
-            except WebSocketDisconnect:
-                break
-            except Exception as e:
-                logger.error(f"❌ Error processing control command from {client_id}: {e}")
-                break
+            # Echo acknowledgment
+            await websocket.send_json({"type": "command_ack", "command": cmd})
 
     except WebSocketDisconnect:
-        logger.info(f"🔴 Control WS disconnected (client): {client_id}")
+        logger.info(f"🔴 Control WS disconnected (session: {session_id})")
 
     except Exception as e:
-        logger.error(f"❌ Control WS error for {client_id}: {e}")
+        logger.error(f"❌ Control WS error (session: {session_id}): {e}")
 
     finally:
         # Clean up
-        if session_id in control_websocket_clients:
-            del control_websocket_clients[session_id]
-
-        logger.info(f"🔴 Control WS closed: {client_id} (session: {session_id})")
+        CONTROL_CLIENTS[session_id].discard(websocket)
+        logger.info(f"🔴 Control WS closed (session: {session_id})")
 
 
 async def send_control_event(session_id: str, event: Dict[str, Any]):
-    """Send an event to the control WebSocket for a specific session."""
-    if session_id in control_websocket_clients:
-        try:
-            await control_websocket_clients[session_id].send_json(event)
-        except Exception as e:
-            logger.error(f"❌ Failed to send control event to session {session_id}: {e}")
+    """Send an event to all control WebSockets for a specific session."""
+    if session_id in CONTROL_CLIENTS:
+        for ws in list(CONTROL_CLIENTS[session_id]):
+            try:
+                await ws.send_json(event)
+            except Exception as e:
+                logger.error(f"❌ Failed to send control event: {e}")
+                CONTROL_CLIENTS[session_id].discard(ws)
 
 
 def send_control_event_threadsafe(session_id: str, event: Dict[str, Any]):
@@ -668,7 +596,7 @@ def send_control_event_threadsafe(session_id: str, event: Dict[str, Any]):
 
     Uses run_coroutine_threadsafe to schedule the send on the main event loop.
     """
-    if session_id not in control_websocket_clients:
+    if session_id not in CONTROL_CLIENTS:
         return
 
     try:
@@ -685,6 +613,12 @@ def send_control_event_threadsafe(session_id: str, event: Dict[str, Any]):
         future.result(timeout=1.0)
     except Exception as e:
         logger.error(f"❌ Thread-safe control send failed for session {session_id}: {e}")
+
+
+def send_browser_frame(session_id: str, frame_b64: str, url: str):
+    """Send a browser frame to all clients subscribed to this session."""
+    event = {"type": "frame", "data": frame_b64, "url": url}
+    send_control_event_threadsafe(session_id, event)
 
 
 @app.get("/health")
@@ -712,7 +646,7 @@ async def health_check():
         },
         "websocket": {
             "active_browser_connections": len(connected_websocket_clients),
-            "active_control_connections": len(control_websocket_clients)
+            "active_control_connections": sum(len(clients) for clients in CONTROL_CLIENTS.values())
         }
     }
 

@@ -18,8 +18,12 @@ export function useRun(sessionId) {
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
   const [connected, setConnected] = useState(false)
+  const [fps, setFps] = useState(0)
+  const [currentUrl, setCurrentUrl] = useState('')
 
   const wsRef = useRef(null)
+  const canvasRef = useRef(null)
+  const fpsCounterRef = useRef({ frames: 0, lastTime: Date.now() })
   const reconnectTimeoutRef = useRef(null)
   const reconnectAttemptsRef = useRef(0)
 
@@ -98,6 +102,11 @@ export function useRun(sessionId) {
             ws.send(JSON.stringify({ type: 'pong' }))
           } else if (message.type === 'command_ack') {
             console.log('✅ Command acknowledged:', message.command)
+          } else if (message.type === 'frame') {
+            // Render browser frame
+            renderFrame(message.data)
+            setCurrentUrl(message.url)
+            updateFPS()
           }
         } catch (err) {
           console.error('❌ Error processing control message:', err)
@@ -131,7 +140,7 @@ export function useRun(sessionId) {
       console.error('❌ Failed to create control WebSocket:', err)
       setError('Failed to initialize control connection')
     }
-  }, [sessionId, currentStep])
+  }, [sessionId, currentStep, renderFrame, updateFPS])
 
   // Send command to control WebSocket
   const sendCommand = useCallback((type, data = {}) => {
@@ -157,6 +166,52 @@ export function useRun(sessionId) {
   const nudge = useCallback((text) => {
     sendCommand('nudge', { text })
   }, [sendCommand])
+
+  // Frame rendering for live browser stream
+  const renderFrame = useCallback((base64Frame) => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    const img = new Image()
+
+    img.onload = () => {
+      // Resize canvas to match frame dimensions
+      if (canvas.width !== img.width || canvas.height !== img.height) {
+        canvas.width = img.width
+        canvas.height = img.height
+      }
+
+      // Draw frame
+      ctx.drawImage(img, 0, 0)
+    }
+
+    img.onerror = (err) => {
+      console.error('❌ Failed to load frame image:', err)
+    }
+
+    img.src = `data:image/jpeg;base64,${base64Frame}`
+  }, [])
+
+  const updateFPS = useCallback(() => {
+    const counter = fpsCounterRef.current
+    counter.frames++
+
+    const now = Date.now()
+    const elapsed = now - counter.lastTime
+
+    // Update FPS every second
+    if (elapsed >= 1000) {
+      const currentFps = Math.round((counter.frames * 1000) / elapsed)
+      setFps(currentFps)
+      counter.frames = 0
+      counter.lastTime = now
+    }
+  }, [])
+
+  const attach = useCallback((canvas) => {
+    canvasRef.current = canvas
+  }, [])
 
   // Connect WebSocket on mount
   useEffect(() => {
@@ -185,6 +240,9 @@ export function useRun(sessionId) {
     pause,
     resume,
     stop,
-    nudge
+    nudge,
+    attach,
+    fps,
+    currentUrl
   }
 }

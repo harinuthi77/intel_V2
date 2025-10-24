@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Optional, Union
 import builtins
+import threading
 
 # Import new capabilities
 from computational_env import get_computational_environment, CodeEditor
@@ -44,6 +45,7 @@ class AgentConfig:
     max_steps: int = 40
     headless: bool = False
     control_state: Optional[Dict[str, Any]] = None  # Thread-safe control state from server
+    stream_callback: Optional[Any] = None  # Callback(frame_b64: str, url: str) for browser streaming
 
 
 @dataclass
@@ -857,6 +859,32 @@ class LoopDetector:
         self.loop_break_attempts = 0
 
 
+def stream_agent_browser(page, stream_callback, stop_flag):
+    """
+    Streams screenshots from the agent's sync Playwright page.
+    Runs in a background thread.
+
+    Args:
+        page: Playwright page object (sync API)
+        stream_callback: Function(frame_b64: str, url: str) to send frames
+        stop_flag: threading.Event() to signal stop
+    """
+    while not stop_flag.is_set():
+        try:
+            # Take screenshot (JPEG, 60% quality for speed)
+            img_bytes = page.screenshot(type="jpeg", quality=60)
+            img_b64 = base64.b64encode(img_bytes).decode("ascii")
+
+            # Send frame via callback
+            if stream_callback:
+                stream_callback(img_b64, page.url)
+
+            time.sleep(0.05)  # ~20 FPS
+        except Exception as e:
+            # Page might be closed or transitioning
+            time.sleep(0.5)
+
+
 # ============ MAIN ADAPTIVE AGENT ============
 def run_adaptive_agent(
     config: Union[AgentConfig, Dict[str, Any], str],
@@ -985,6 +1013,18 @@ def run_adaptive_agent(
                 # Store browser references for cleanup
                 shutdown_handler.set_browser_refs(p, browser, context, page)
 
+                # Start browser streaming thread (if callback provided)
+                stream_stop_flag = threading.Event()
+                stream_thread = None
+                if config.stream_callback:
+                    stream_thread = threading.Thread(
+                        target=stream_agent_browser,
+                        args=(page, config.stream_callback, stream_stop_flag),
+                        daemon=True
+                    )
+                    stream_thread.start()
+                    print("🎥 Started browser streaming thread (~20 FPS)")
+
                 conversation_history = []
                 collected_data = []
                 last_url = ""
@@ -1006,19 +1046,17 @@ def run_adaptive_agent(
 
                     # Check for stop request from control channel
                     if config.control_state:
-                        with config.control_state["lock"]:
-                            if config.control_state["stop_requested"]:
-                                print("🛑 Stop requested via control channel - halting execution")
-                                break
+                        if config.control_state["stopped"]:
+                            print("🛑 Stop requested via control channel - halting execution")
+                            break
 
-                            # Handle pause
-                            while config.control_state["paused"]:
-                                pass  # Wait
-                                time.sleep(0.5)
-                                # Recheck stop in case it was set while paused
-                                if config.control_state["stop_requested"]:
-                                    print("🛑 Stop requested while paused - halting execution")
-                                    break
+                        # Handle pause
+                        while config.control_state["paused"]:
+                            time.sleep(0.1)
+                            # Recheck stop in case it was set while paused
+                            if config.control_state["stopped"]:
+                                print("🛑 Stop requested while paused - halting execution")
+                                break
 
                     time.sleep(random.uniform(1.0, 1.8))
 
@@ -1783,6 +1821,13 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
             raise  # Re-raise to be caught by outer exception handler
 
         finally:
+            # Stop browser streaming thread
+            if 'stream_stop_flag' in locals():
+                stream_stop_flag.set()
+            if 'stream_thread' in locals() and stream_thread is not None:
+                stream_thread.join(timeout=1.0)
+                print("🎥 Stopped browser streaming thread")
+
             # Cleanup browser resources
             if 'page' in locals() and page is not None:
                 try:

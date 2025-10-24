@@ -41,15 +41,20 @@ export default function ForgePlatform() {
     pause,
     resume,
     stop,
-    nudge
-  } = useRun(sessionId)
-
-  const {
+    nudge,
     attach: attachStream,
-    connected: streamConnected,
     fps,
     currentUrl
-  } = useStream(sessionId)
+  } = useRun(sessionId)
+
+  // Note: useStream is for manual control browser (LiveBrowserManager)
+  // Agent's browser now streams through control channel (useRun)
+  // const {
+  //   attach: attachStream,
+  //   connected: streamConnected,
+  //   fps,
+  //   currentUrl
+  // } = useStream(sessionId)
 
   const chatFolders = {
     recent: {
@@ -1325,7 +1330,7 @@ export default function ForgePlatform() {
                   }} />
                   Control {controlConnected ? 'Connected' : 'Disconnected'}
                 </div>
-                {streamConnected && (
+                {controlConnected && fps > 0 && (
                   <div style={{
                     padding: '4px 8px',
                     background: 'rgba(255, 138, 0, 0.1)',
@@ -1351,7 +1356,7 @@ export default function ForgePlatform() {
             padding: '20px',
             position: 'relative'
           }}>
-            {streamConnected ? (
+            {controlConnected && phase !== 'IDLE' ? (
               <canvas
                 ref={canvasRef}
                 style={{
