@@ -947,9 +947,9 @@ def run_adaptive_agent(
                 browser = None
                 context = None
                 page = None
-                print(f"🚀 Launching Chromium (headless={config.headless})...")
+                print(f"🚀 Launching Chromium (headless=True)...")
                 browser = p.chromium.launch(
-                    headless=config.headless,
+                    headless=True,  # Always headless for embedded view
                     args=[
                         '--disable-blink-features=AutomationControlled',
                         '--force-device-scale-factor=1',  # Stable viewport - no zoom
