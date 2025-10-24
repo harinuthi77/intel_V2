@@ -932,16 +932,15 @@ def run_adaptive_agent(
                 browser = None
                 context = None
                 page = None
-                try:
-                    print(f"🚀 Launching Chromium (headless={config.headless})...")
-                    browser = p.chromium.launch(
-                        headless=config.headless,
-                        args=[
-                            '--disable-blink-features=AutomationControlled',
-                            '--force-device-scale-factor=1',  # Stable viewport - no zoom
-                        ]
-                    )
-                    print("✅ Browser launched successfully")
+                print(f"🚀 Launching Chromium (headless={config.headless})...")
+                browser = p.chromium.launch(
+                    headless=config.headless,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--force-device-scale-factor=1',  # Stable viewport - no zoom
+                    ]
+                )
+                print("✅ Browser launched successfully")
 
                 print("📱 Creating browser context (1280x720)...")
                 context = browser.new_context(
