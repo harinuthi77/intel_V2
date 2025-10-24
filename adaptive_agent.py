@@ -1669,23 +1669,6 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
 
                     print(f"\n{reflection.get_progress_summary()}")
 
-            finally:
-                if page is not None:
-                    try:
-                        remove_labels(page)
-                    except Exception:
-                        pass
-                if context:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-                if browser:
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
-
         except Exception as playwright_error:
             print(f"\n{'='*70}")
             print(f"❌ PLAYWRIGHT INITIALIZATION ERROR")
@@ -1698,6 +1681,24 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
             print(f"{'='*70}\n")
             errors.append(f"Playwright error: {str(playwright_error)}")
             raise  # Re-raise to be caught by outer exception handler
+
+        finally:
+            # Cleanup browser resources
+            if 'page' in locals() and page is not None:
+                try:
+                    remove_labels(page)
+                except Exception:
+                    pass
+            if 'context' in locals() and context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if 'browser' in locals() and browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
         print(f"\n💾 Learning data saved to: agent_learning.db")
         print(f"📊 Session: {session_id}")
