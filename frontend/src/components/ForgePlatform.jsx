@@ -347,13 +347,14 @@ export default function ForgePlatform() {
           minHeight: 0,
           minWidth: 0,
           overflow: 'hidden',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '12px'
+          backgroundColor: '#0f0f0f'
         }}>
           {phase === 'IDLE' ? (
             <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
               fontSize: '14px',
               color: '#6b7280'
             }}>
@@ -365,8 +366,8 @@ export default function ForgePlatform() {
               {currentUrl && (
                 <div style={{
                   position: 'absolute',
-                  top: '24px',
-                  left: '24px',
+                  top: '16px',
+                  left: '16px',
                   zIndex: 10,
                   display: 'flex',
                   alignItems: 'center',
@@ -399,29 +400,21 @@ export default function ForgePlatform() {
                 </div>
               )}
 
-              {/* Canvas Wrapper with 16:9 Aspect Ratio - Playwright/Puppeteer Method */}
-              <div style={{
-                width: '100%',
-                aspectRatio: '16 / 9',
-                maxHeight: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <canvas
-                  ref={canvasRef}
-                  width={1920}
-                  height={1080}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    backgroundColor: '#1a1a1a',
-                    borderRadius: '8px',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                    border: '1px solid #333'
-                  }}
-                />
-              </div>
+              {/* Canvas - Fill entire right panel */}
+              <canvas
+                ref={canvasRef}
+                width={1920}
+                height={1080}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#1a1a1a',
+                  objectFit: 'contain'
+                }}
+              />
             </>
           )}
         </div>

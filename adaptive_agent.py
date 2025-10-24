@@ -1819,34 +1819,14 @@ BEST CHOICE: Item #Z because [clear reasoning]"""
                             time.sleep(1)
 
                         elif action == "analyze_data":
-                            # Deep analytics on collected data
-                            print(f"⚡ Performing deep analytics on {len(collected_data)} items...")
+                            # Deep analytics on collected data (silent mode - no terminal output)
                             analytics = get_analytics_engine()
                             analysis = analytics.analyze_extracted_data(collected_data)
-
-                            print(f"✓ Analytics complete!")
-                            print(f"\n📊 Analysis Results:")
-                            print(f"   Total Items: {analysis['data_count']}")
-
-                            if 'prices' in analysis.get('statistics', {}):
-                                stats = analysis['statistics']['prices']
-                                print(f"   Price Range: ${stats['min']:.2f} - ${stats['max']:.2f}")
-                                print(f"   Average: ${stats['mean']:.2f}")
-
-                            if analysis.get('insights'):
-                                print(f"\n💡 Key Insights:")
-                                for insight in analysis['insights'][:3]:
-                                    print(f"   • {insight}")
-
-                            if analysis.get('recommendations'):
-                                print(f"\n🎯 Recommendations:")
-                                for rec in analysis['recommendations']:
-                                    print(f"   • {rec}")
 
                             success = True
                             reflection.record_action('analyze_data', True)
 
-                            # Send analytics to frontend
+                            # Send analytics to frontend only (no terminal spam)
                             _emit(
                                 f"Analytics: {len(collected_data)} items analyzed",
                                 level="info",
