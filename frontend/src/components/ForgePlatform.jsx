@@ -59,9 +59,10 @@ export default function ForgePlatform() {
             const img = new Image();
 
             img.onload = () => {
-              ctx.clearRect(0, 0, 1280, 720);
-              ctx.drawImage(img, 0, 0, 1280, 720);
-              console.log('✅ Frame drawn to canvas');
+              // Full HD 1920x1080 canvas
+              ctx.clearRect(0, 0, 1920, 1080);
+              ctx.drawImage(img, 0, 0, 1920, 1080);
+              console.log('✅ Frame drawn to canvas (1920x1080)');
             };
 
             img.onerror = (err) => {
@@ -396,11 +397,11 @@ export default function ForgePlatform() {
                 </div>
               )}
 
-              {/* Canvas */}
+              {/* Canvas - Full HD 1920x1080 to match Playwright viewport */}
               <canvas
                 ref={canvasRef}
-                width={1280}
-                height={720}
+                width={1920}
+                height={1080}
                 style={{
                   maxWidth: '100%',
                   maxHeight: '100%',
