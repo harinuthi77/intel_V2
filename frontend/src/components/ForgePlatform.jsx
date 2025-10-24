@@ -1530,21 +1530,32 @@ export default function ForgePlatform() {
             alignItems: 'center',
             justifyContent: 'center',
             padding: '20px',
-            position: 'relative'
+            position: 'relative',
+            minHeight: 0 // Critical for flex child to shrink properly
           }}>
             {(controlConnected || phase === 'STARTING' || phase === 'BROWSER_CONNECTING' || phase === 'RUNNING') && phase !== 'IDLE' ? (
-              <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+              <div style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center',
+                backgroundColor: '#1a1a1a',
+                borderRadius: '8px',
+                overflow: 'hidden'
+              }}>
                 <canvas
                   ref={canvasCallbackRef}
                   style={{
                     maxWidth: '100%',
                     maxHeight: '100%',
+                    width: 'auto',
                     height: 'auto',
-                    borderRadius: '8px',
+                    objectFit: 'contain',
                     boxShadow: '0 8px 32px rgba(255, 138, 0, 0.2)',
                     border: '1px solid rgba(255, 138, 0, 0.2)',
-                    display: 'block',
-                    backgroundColor: '#1a1a1a'
+                    display: 'block'
                   }}
                 />
                 {/* Show loading overlay on canvas until first frame arrives */}
