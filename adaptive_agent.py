@@ -924,14 +924,28 @@ def run_adaptive_agent(
             try:
                 browser = p.chromium.launch(
                     headless=config.headless,
-                    args=['--disable-blink-features=AutomationControlled']
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--force-device-scale-factor=1',  # Stable viewport - no zoom
+                    ]
                 )
                 context = browser.new_context(
-                    viewport={'width': 1920, 'height': 1080},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    viewport={'width': 1280, 'height': 720},  # Fixed stable viewport
+                    device_scale_factor=1.0,  # Prevent zoom changes
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 )
                 page = context.new_page()
+
+                # Hide webdriver detection
                 page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+
+                # Lock zoom level to prevent viewport instability
+                page.add_init_script("""
+                    Object.defineProperty(window, 'devicePixelRatio', {
+                        get: () => 1,
+                        configurable: false
+                    });
+                """)
 
                 # Store browser references for cleanup
                 shutdown_handler.set_browser_refs(p, browser, context, page)
@@ -1075,9 +1089,12 @@ def run_adaptive_agent(
                         elif alternative == "scroll_down":
                             print("   → Trying: Scroll down")
                             try:
-                                page.evaluate("window.scrollBy(0, 500)")
+                                # Scroll 80% of viewport height (720 * 0.8 = 576px)
+                                viewport_height = 720
+                                scroll_distance = int(viewport_height * 0.8)
+                                page.evaluate(f"window.scrollBy({{top: {scroll_distance}, behavior: 'smooth'}})")
                                 time.sleep(0.5)
-                                print("   ✅ Scrolled down")
+                                print(f"   ✅ Scrolled down {scroll_distance}px")
                                 loop_detector.record_action("scroll down")
                                 reflection.record_action("scroll", "loop_break")
                             except Exception as scroll_err:
