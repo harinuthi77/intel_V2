@@ -8,13 +8,18 @@ This test validates STEP 2.2 implementation.
 
 import sys
 import os
-sys.path.insert(0, '/home/user/intel_V2')
+from pathlib import Path
+
+# Get the script directory (works on Windows and Linux)
+SCRIPT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 
 print("Testing UI Embedding Configuration...")
 
 # Test 1: Check CORS configuration in backend/server.py
 print("\n1. Checking CORS configuration...")
-with open('/home/user/intel_V2/backend/server.py', 'r') as f:
+server_path = SCRIPT_DIR / 'backend' / 'server.py'
+with open(server_path, 'r') as f:
     content = f.read()
 
     # Check for CORS middleware
@@ -32,7 +37,7 @@ with open('/home/user/intel_V2/backend/server.py', 'r') as f:
 
 # Test 2: Check WebSocket endpoint for live browser
 print("\n2. Checking WebSocket endpoint...")
-with open('/home/user/intel_V2/backend/server.py', 'r') as f:
+with open(server_path, 'r') as f:
     content = f.read()
 
     assert '@app.websocket("/ws/browser")' in content, "WebSocket /ws/browser endpoint not found"
@@ -45,7 +50,7 @@ with open('/home/user/intel_V2/backend/server.py', 'r') as f:
 
 # Test 3: Check SSE endpoint for agent events
 print("\n3. Checking SSE endpoint...")
-with open('/home/user/intel_V2/backend/server.py', 'r') as f:
+with open(server_path, 'r') as f:
     content = f.read()
 
     assert '@app.post("/execute/stream")' in content or '@app.get("/events")' in content, "SSE streaming endpoint not found"
@@ -58,9 +63,10 @@ with open('/home/user/intel_V2/backend/server.py', 'r') as f:
 
 # Test 4: Check LiveBrowserManager integration
 print("\n4. Checking LiveBrowserManager...")
-assert os.path.exists('/home/user/intel_V2/live_browser_manager.py'), "live_browser_manager.py not found"
+live_manager_path = SCRIPT_DIR / 'live_browser_manager.py'
+assert live_manager_path.exists(), "live_browser_manager.py not found"
 
-with open('/home/user/intel_V2/live_browser_manager.py', 'r') as f:
+with open(live_manager_path, 'r') as f:
     content = f.read()
 
     assert 'class LiveBrowserManager' in content, "LiveBrowserManager class not found"
@@ -74,8 +80,8 @@ with open('/home/user/intel_V2/live_browser_manager.py', 'r') as f:
 
 # Test 5: Check frontend LiveBrowserView component
 print("\n5. Checking LiveBrowserView component...")
-livebrowser_path = '/home/user/intel_V2/frontend/src/components/LiveBrowserView.jsx'
-assert os.path.exists(livebrowser_path), "LiveBrowserView.jsx not found"
+livebrowser_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'LiveBrowserView.jsx'
+assert livebrowser_path.exists(), "LiveBrowserView.jsx not found"
 
 with open(livebrowser_path, 'r') as f:
     content = f.read()
@@ -92,8 +98,8 @@ with open(livebrowser_path, 'r') as f:
 
 # Test 6: Check ForgePlatform integration
 print("\n6. Checking ForgePlatform integration...")
-forge_path = '/home/user/intel_V2/frontend/src/components/ForgePlatform.jsx'
-assert os.path.exists(forge_path), "ForgePlatform.jsx not found"
+forge_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'ForgePlatform.jsx'
+assert forge_path.exists(), "ForgePlatform.jsx not found"
 
 with open(forge_path, 'r') as f:
     content = f.read()
@@ -106,8 +112,8 @@ with open(forge_path, 'r') as f:
 
 # Test 7: Check package.json for required dependencies
 print("\n7. Checking frontend dependencies...")
-package_json_path = '/home/user/intel_V2/frontend/package.json'
-if os.path.exists(package_json_path):
+package_json_path = SCRIPT_DIR / 'frontend' / 'package.json'
+if package_json_path.exists():
     with open(package_json_path, 'r') as f:
         content = f.read()
 

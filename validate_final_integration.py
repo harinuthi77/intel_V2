@@ -13,7 +13,11 @@ This test validates the complete integration of all fixes.
 
 import sys
 import os
-sys.path.insert(0, '/home/user/intel_V2')
+from pathlib import Path
+
+# Get the script directory (works on Windows and Linux)
+SCRIPT_DIR = Path(__file__).parent.resolve()
+sys.path.insert(0, str(SCRIPT_DIR))
 
 # Set dummy API key for import
 os.environ['ANTHROPIC_API_KEY'] = 'sk-ant-test-dummy-key-for-validation'
@@ -122,7 +126,8 @@ print("\n[STEP 2.1] Testing Stable Viewport Configuration...")
 print("-" * 80)
 
 # Check viewport configuration in adaptive_agent.py
-with open('/home/user/intel_V2/adaptive_agent.py', 'r') as f:
+adaptive_agent_path = SCRIPT_DIR / 'adaptive_agent.py'
+with open(adaptive_agent_path, 'r') as f:
     content = f.read()
 
     # Test 1: Viewport size set to 1280x720
@@ -155,11 +160,12 @@ print("\n[STEP 2.2] Testing Browser Embedding...")
 print("-" * 80)
 
 # Test 1: LiveBrowserManager exists
-assert os.path.exists('/home/user/intel_V2/live_browser_manager.py'), "LiveBrowserManager module not found"
+live_manager_path = SCRIPT_DIR / 'live_browser_manager.py'
+assert live_manager_path.exists(), "LiveBrowserManager module not found"
 print("✓ Test 1/6: LiveBrowserManager module exists")
 
 # Test 2: LiveBrowserManager has CDP streaming
-with open('/home/user/intel_V2/live_browser_manager.py', 'r') as f:
+with open(live_manager_path, 'r') as f:
     content = f.read()
     assert 'class LiveBrowserManager' in content, "LiveBrowserManager class not found"
     assert 'start_streaming' in content, "start_streaming method not found"
@@ -167,14 +173,15 @@ with open('/home/user/intel_V2/live_browser_manager.py', 'r') as f:
     print("✓ Test 2/6: LiveBrowserManager implements CDP streaming")
 
 # Test 3: Backend WebSocket endpoint exists
-with open('/home/user/intel_V2/backend/server.py', 'r') as f:
+server_path = SCRIPT_DIR / 'backend' / 'server.py'
+with open(server_path, 'r') as f:
     content = f.read()
     assert '@app.websocket("/ws/browser")' in content, "WebSocket /ws/browser endpoint not found"
     print("✓ Test 3/6: Backend WebSocket endpoint /ws/browser exists")
 
 # Test 4: Frontend LiveBrowserView component exists
-livebrowser_path = '/home/user/intel_V2/frontend/src/components/LiveBrowserView.jsx'
-assert os.path.exists(livebrowser_path), "LiveBrowserView.jsx not found"
+livebrowser_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'LiveBrowserView.jsx'
+assert livebrowser_path.exists(), "LiveBrowserView.jsx not found"
 print("✓ Test 4/6: Frontend LiveBrowserView component exists")
 
 # Test 5: LiveBrowserView uses WebSocket and Canvas
@@ -185,7 +192,7 @@ with open(livebrowser_path, 'r') as f:
     print("✓ Test 5/6: LiveBrowserView uses WebSocket + Canvas rendering")
 
 # Test 6: ForgePlatform integrates LiveBrowserView
-forge_path = '/home/user/intel_V2/frontend/src/components/ForgePlatform.jsx'
+forge_path = SCRIPT_DIR / 'frontend' / 'src' / 'components' / 'ForgePlatform.jsx'
 with open(forge_path, 'r') as f:
     content = f.read()
     assert 'LiveBrowserView' in content, "LiveBrowserView not integrated in ForgePlatform"
